@@ -22,14 +22,14 @@ teardown() { brain_test_teardown; rm -rf "$BRAIN_SYNC_WORK"; }
   grep -q "failed selfcheck, restoring" "$LOG"
 }
 
-@test "a launcher lock left by a dead pid is taken over" {
+@test "a launcher lock left behind by a crash is taken over once it is stale" {
   BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" --selfcheck-only
-  ( sleep 0.1 ) & local deadpid=$!
-  wait "$deadpid" 2>/dev/null
-  mkdir -p "$STATE/run.lock"; echo "$deadpid" > "$STATE/run.lock/pid"
+  # No pid file: a crash between mkdir and the pid write is exactly the case the pid-based
+  # version could never recover from, and it bricked the Mac silently.
+  mkdir -p "$STATE/run.lock"; touch -t 202001010000 "$STATE/run.lock"
   BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" run bash "$REPO_ROOT/lib/launcher.sh" --selfcheck-only
   [ "$status" -eq 0 ]
-  grep -q "breaking stale lock from pid $deadpid" "$LOG"
+  grep -q "broke a lock abandoned" "$LOG"
 }
 
 @test "a launcher holder whose lock was stolen cannot delete the new owner's lock" {

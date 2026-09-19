@@ -13,27 +13,44 @@ teardown() { brain_test_teardown; }
   [ "$(grep -c 'offline; local work' "$LOG")" -eq 1 ]
 }
 
-@test "a lock left by a dead pid is broken rather than waited on forever" {
-  ( sleep 0.1 ) & local deadpid=$!
-  wait "$deadpid" 2>/dev/null
-  mkdir -p "$LOCK"; echo "$deadpid" > "$LOCK/pid"
-  run bash "$REPO_ROOT/tests/fixtures/lockrunner.sh" 0
+@test "an abandoned lock is taken over, and age decides it rather than a pid" {
+  mkdir -p "$LOCK"
+  # No pid file at all - a crash between mkdir and the pid write used to leave a lock nobody
+  # could ever break, and every later cycle refused forever. Age does not care.
+  touch -t 202001010000 "$LOCK"
+  run bash -c "source '$REPO_ROOT/lib/common.sh'; acquire_lock && echo taken"
   [ "$status" -eq 0 ]
-  grep -q "breaking stale lock from pid $deadpid" "$LOG"
+  [[ "$output" == *taken* ]]
+  grep -q "broke a lock abandoned" "$LOG"
 }
 
-@test "stale-lock takeover recreates the lock for the winner" {
-  ( sleep 0.1 ) & local deadpid=$!
-  wait "$deadpid" 2>/dev/null
-  mkdir -p "$LOCK"; echo "$deadpid" > "$LOCK/pid"
-  bash -c "source '$REPO_ROOT/lib/common.sh'; acquire_lock; sleep 0.5" &
+@test "a fresh lock is never broken, whatever pid it names" {
+  mkdir -p "$LOCK"
+  echo 999999 > "$LOCK/pid"        # a dead pid, but the lock itself is seconds old
+  run bash -c "source '$REPO_ROOT/lib/common.sh'; acquire_lock"
+  [ "$status" -ne 0 ]
+  [ -d "$LOCK" ]
+}
+
+@test "a takeover leaves the lock present and owned by the winner" {
+  mkdir -p "$LOCK"; touch -t 202001010000 "$LOCK"
+  bash -c "source '$REPO_ROOT/lib/common.sh'; acquire_lock; sleep 0.6" &
   local winner=$!
-  sleep 0.1
+  sleep 0.2
   [ -d "$LOCK" ]
   [ "$(cat "$LOCK/pid")" = "$winner" ]
   run bash -c "source '$REPO_ROOT/lib/common.sh'; acquire_lock"
   [ "$status" -ne 0 ]
   wait "$winner"
+}
+
+@test "the engine and the launcher carry the same lock, byte for byte" {
+  # The launcher must not source engine files (a broken update would take down its own
+  # rollback), so the lock is duplicated on purpose. Three review rounds broke one copy at a
+  # time; this is what stops them drifting apart again.
+  run diff <(sed -n '/^LOCK_STALE_SECONDS=/,/^}$/p' "$REPO_ROOT/lib/common.sh") \
+           <(sed -n '/^LOCK_STALE_SECONDS=/,/^}$/p' "$REPO_ROOT/lib/launcher.sh")
+  [ "$status" -eq 0 ]
 }
 
 @test "a holder whose lock was stolen cannot delete the new owner's lock" {
