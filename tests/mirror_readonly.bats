@@ -17,6 +17,24 @@ teardown() { brain_test_teardown; }
   [ ! -e "$MIRROR/root-file.txt" ]
 }
 
+@test "a fetch that fails on the very first cycle still leaves the mirror protected" {
+  # The test below reaches this path AFTER a successful cycle has already protected the tree,
+  # so removing the failure branch's protect_readonly changed nothing and the mutation stayed
+  # green. A freshly cloned mirror has never been protected: if its first fetch fails and the
+  # branch is missing, the whole company folder is left writable, and whatever the creator
+  # then writes into it dies in the next successful reset --hard.
+  local root; root="$(mktemp -d)"
+  seed_repo "$root/origin.git" "$root/serlinolab" sub/file.txt
+  git -C "$root/serlinolab" remote set-url origin "$root/missing-origin.git"
+  BRAIN_ROOT="$root" MIRROR="$root/serlinolab" run bash -c \
+    "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; MIRROR='$root/serlinolab'; sync_mirror"
+  [ "$status" -ne 0 ]
+  run bash -c "echo hi > '$root/serlinolab/sub/file.txt'"
+  [ "$status" -ne 0 ]
+  chmod -R u+w "$root" 2>/dev/null || true
+  rm -rf "$root"
+}
+
 @test "a failed mirror fetch leaves the mirror protected" {
   git -C "$MIRROR" remote set-url origin "$BRAIN_ROOT/missing-origin.git"
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git" run bash "$REPO_ROOT/sync.sh"
