@@ -31,7 +31,8 @@ teardown() { brain_test_teardown; }
   # <user>@<hostname>.local and commits happily. That is the defect. Every creator's notes
   # would be attributed to their Mac's hostname, and MAX-1515 ties attribution to pay.
   make_local_ahead_change
-  run_sync_cycle
+  GIT_AUTHOR_NAME='Wrong Person' GIT_AUTHOR_EMAIL=wrong@example.com \
+    GIT_COMMITTER_NAME='Wrong Person' GIT_COMMITTER_EMAIL=wrong@example.com run_sync_cycle
   # the expected value is written out, not read from the engine's own variable: comparing two
   # things the engine computes would pass even when both are wrong. helpers.bash seeds
   # $STATE/person with "testperson", exactly as setup.sh does on a real Mac.

@@ -29,3 +29,27 @@ teardown() { brain_test_teardown; }
   [ "$status" -ne 0 ]
   [ ! -d "$MIRROR/sub/newdir" ]
 }
+
+@test "editing an existing tracked mirror file fails" {
+  run bash -c "echo changed > '$MIRROR/sub/file.txt'" 2>/dev/null
+  [ "$status" -ne 0 ]
+  [ "$(cat "$MIRROR/sub/file.txt")" = hello ]
+}
+
+@test "a file cannot be created during the protected fetch window" {
+  local fakebin real_git
+  fakebin="$(mktemp -d)"; real_git="$(type -P git)"
+  cat > "$fakebin/git" <<'SCRIPT'
+#!/bin/bash
+"$REAL_GIT" "$@"
+if [ "$1" = "-C" ] && [ "$3" = fetch ]; then
+  if echo race > "$MIRROR/race.txt"; then touch "$BRAIN_ROOT/race-created"; fi
+fi
+SCRIPT
+  chmod +x "$fakebin/git"
+  REAL_GIT="$real_git" PATH="$fakebin:$PATH" ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git" \
+    run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+  [ ! -e "$BRAIN_ROOT/race-created" ]
+  [ ! -e "$MIRROR/race.txt" ]
+}

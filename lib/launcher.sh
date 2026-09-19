@@ -31,7 +31,7 @@ if git fetch --quiet origin main 2>/dev/null; then
       log "self-update: updated ${prev:-none} -> $new"
     else
       log "self-update: $new failed selfcheck, restoring ${prev:-none}"
-      [ -n "$prev" ] && git reset --quiet --hard "$prev"
+      [ -n "$prev" ] && git reset --quiet --hard "$prev" && git clean -ffdq
     fi
   fi
 fi

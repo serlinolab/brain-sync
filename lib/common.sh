@@ -21,7 +21,10 @@ ONLINE_CHECK_REMOTE="${ONLINE_CHECK_REMOTE:-git@brain-mirror:serlinolab/Serlinol
 PERSON_FILE="$STATE/person"
 PERSON_SLUG="${BRAIN_PERSON_SLUG:-}"
 [ -n "$PERSON_SLUG" ] || PERSON_SLUG=$(cat "$PERSON_FILE" 2>/dev/null || true)
-if [ -z "$PERSON_SLUG" ]; then PERSON_SLUG="unknown"; PERSON_UNKNOWN=1; else PERSON_UNKNOWN=0; fi
+case "$PERSON_SLUG" in
+  ''|*[!a-z0-9-]*) PERSON_SLUG="unknown"; PERSON_UNKNOWN=1 ;;
+  *) PERSON_UNKNOWN=0 ;;
+esac
 GIT_IDENTITY_NAME="Serlino Brain ($PERSON_SLUG)"
 GIT_IDENTITY_EMAIL="brain-$PERSON_SLUG@$(hostname -s).local"
 mkdir -p "$STATE" 2>/dev/null
@@ -38,6 +41,7 @@ acquire_lock(){
       local stale="$LOCK.stale.$$"
       log "breaking stale lock from pid $(cat "$LOCK/pid")"
       mv "$LOCK" "$stale" 2>/dev/null || return 1
+      mkdir "$LOCK" 2>/dev/null || return 1
       rm -f "$stale/pid"
       rmdir "$stale" 2>/dev/null || true
     else

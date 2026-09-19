@@ -22,6 +22,16 @@ teardown() { brain_test_teardown; }
   grep -q "breaking stale lock from pid $deadpid" "$LOG"
 }
 
-@test "stale-lock ownership transfer is an atomic rename" {
-  grep -q 'mv "\$LOCK" "\$stale"' "$REPO_ROOT/lib/common.sh"
+@test "stale-lock takeover recreates the lock for the winner" {
+  ( sleep 0.1 ) & local deadpid=$!
+  wait "$deadpid" 2>/dev/null
+  mkdir -p "$LOCK"; echo "$deadpid" > "$LOCK/pid"
+  bash -c "source '$REPO_ROOT/lib/common.sh'; acquire_lock; sleep 0.5" &
+  local winner=$!
+  sleep 0.1
+  [ -d "$LOCK" ]
+  [ "$(cat "$LOCK/pid")" = "$winner" ]
+  run bash -c "source '$REPO_ROOT/lib/common.sh'; acquire_lock"
+  [ "$status" -ne 0 ]
+  wait "$winner"
 }

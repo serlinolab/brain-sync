@@ -26,12 +26,12 @@ TXT
 sync_mirror(){
   [ -d "$MIRROR/.git" ] || return 0
   local rc=0
-  chmod -R u+w "$MIRROR" 2>/dev/null || true   # git needs write to update its own files
   if ! git -C "$MIRROR" fetch --quiet origin; then
     log "mirror fetch failed"
     protect_readonly "$MIRROR"
     return 1
   fi
+  chmod -R u+w "$MIRROR" 2>/dev/null || true   # git needs write only after the fetch
   git -C "$MIRROR" reset --hard --quiet origin/main || rc=1
   [ "$rc" -eq 0 ] && git -C "$MIRROR" clean -ffdq || rc=1
   [ "$rc" -eq 0 ] && company_readme || rc=1
@@ -52,7 +52,9 @@ commit_local(){
   done < <(find . -path ./.git -prune -o -type f -size +10240k -print0 2>/dev/null)
   [ "$rc" -eq 0 ] || return 1
   if ! git diff --cached --quiet; then
-    git -c user.name="$GIT_IDENTITY_NAME" -c user.email="$GIT_IDENTITY_EMAIL" commit -qm "notes $(date -u +%F' '%T)Z" || return 1
+    GIT_AUTHOR_NAME="$GIT_IDENTITY_NAME" GIT_AUTHOR_EMAIL="$GIT_IDENTITY_EMAIL" \
+      GIT_COMMITTER_NAME="$GIT_IDENTITY_NAME" GIT_COMMITTER_EMAIL="$GIT_IDENTITY_EMAIL" \
+      git commit -qm "notes $(date -u +%F' '%T)Z" || return 1
   fi
 }
 

@@ -19,3 +19,19 @@ teardown() { brain_test_teardown; rm -rf "$BRAIN_SYNC_WORK"; }
   [ "$status" -eq 0 ]
   grep -q "failed selfcheck, restoring" "$LOG"
 }
+
+@test "the launcher lock prevents two self-update cycles from running together" {
+  BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" --selfcheck-only
+  cat > "$STATE/engine/sync.sh" <<'SCRIPT'
+#!/bin/bash
+echo run >> "$BRAIN_ROOT/engine-runs"
+sleep 0.3
+SCRIPT
+  chmod +x "$STATE/engine/sync.sh"
+  BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" &
+  local first=$!
+  BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" &
+  local second=$!
+  wait "$first"; wait "$second"
+  [ "$(wc -l < "$BRAIN_ROOT/engine-runs")" -eq 1 ]
+}
