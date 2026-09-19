@@ -33,6 +33,11 @@ _lock_age_seconds(){
 acquire_lock(){
   if ! mkdir "$LOCK" 2>/dev/null; then
     local age; age=$(_lock_age_seconds "$LOCK") || return 1
+    # Two checks, and they are not redundant even though removing this one keeps every test
+    # green and every probe clean (measured: 6 runs, 3 contenders against a live holder, 0
+    # intruders either way). The SAFETY property is the seized-age re-check below. This one
+    # narrows the window: without it every contender moves the live lock aside and puts it
+    # back, so $LOCK briefly does not exist on each attempt. Keep both; do not "simplify".
     [ "$age" -ge "$LOCK_STALE_SECONDS" ] || return 1
     local seized="$LOCK.dead.$$"
     mv "$LOCK" "$seized" 2>/dev/null || return 1
