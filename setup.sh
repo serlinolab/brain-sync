@@ -25,7 +25,7 @@ if [ ! -e "$STATE/person" ]; then
   printf '%s\n' "$PERSON_SLUG" > "$STATE/person"   # the engine authors commits as this person
 elif [ "$(cat "$STATE/person" 2>/dev/null)" != "$PERSON_SLUG" ]; then
   echo "Person mismatch at $STATE/person: found '$(cat "$STATE/person" 2>/dev/null)', requested '$PERSON_SLUG'." >&2
-  setup_ok=0
+  exit 1
 fi
 echo "Fetching the sync engine..."
 if [ -d "$ENGINE/.git" ]; then
@@ -37,15 +37,25 @@ else
   git clone --quiet "$BRAIN_SYNC_REMOTE" "$ENGINE" || { echo "Could not reach brain-sync. Check your internet connection and try again." >&2; setup_ok=0; }
 fi
 echo "Generating your keys (they never leave this Mac)..."
+derive_public_key() {
+  local key="$1" pub="$1.pub" tmp
+  tmp=$(mktemp "$pub.tmp.XXXXXX") || return 1
+  if ssh-keygen -y -f "$key" > "$tmp" && [ -s "$tmp" ]; then
+    mv -f "$tmp" "$pub"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
 if [ ! -f "$MIRROR_KEY" ]; then
   ssh-keygen -t ed25519 -N "" -C "brain-mirror-$(hostname -s)" -f "$MIRROR_KEY" -q || setup_ok=0
-elif [ ! -f "$MIRROR_KEY.pub" ]; then
-  ssh-keygen -y -f "$MIRROR_KEY" > "$MIRROR_KEY.pub" || setup_ok=0
+elif [ ! -s "$MIRROR_KEY.pub" ]; then
+  derive_public_key "$MIRROR_KEY" || setup_ok=0
 fi
 if [ ! -f "$PERSONAL_KEY" ]; then
   ssh-keygen -t ed25519 -N "" -C "brain-personal-$PERSON_SLUG" -f "$PERSONAL_KEY" -q || setup_ok=0
-elif [ ! -f "$PERSONAL_KEY.pub" ]; then
-  ssh-keygen -y -f "$PERSONAL_KEY" > "$PERSONAL_KEY.pub" || setup_ok=0
+elif [ ! -s "$PERSONAL_KEY.pub" ]; then
+  derive_public_key "$PERSONAL_KEY" || setup_ok=0
 fi
 
 append_host() {
@@ -62,11 +72,19 @@ chmod 600 "$SSH_CONFIG" || setup_ok=0
 mkdir -p "$ROOT/personal" "$ROOT/team"
 chmod a-w "$ROOT/team" 2>/dev/null || true   # AC-8: read-only beside the mirror
 echo "Cloning the company mirror..."
+remote_matches() {
+  local path="$1" expected="$2" url
+  [ -d "$path/.git" ] || return 1
+  [ "$(git -C "$path" remote get-url origin 2>/dev/null || true)" = "$expected" ] || return 1
+  while IFS= read -r url; do
+    [ "$url" = "$expected" ] || return 1
+  done < <(git -C "$path" remote get-url --push --all origin 2>/dev/null)
+}
 expected_mirror='git@brain-mirror:serlinolab/Serlinolab-Brain.git'
 if [ -e "$ROOT/serlinolab" ]; then
   actual=$(git -C "$ROOT/serlinolab" remote get-url origin 2>/dev/null || echo '<missing origin>')
-  if [ "$actual" != "$expected_mirror" ]; then
-    echo "Refusing to adopt $ROOT/serlinolab: origin is $actual, expected $expected_mirror." >&2
+  if ! remote_matches "$ROOT/serlinolab" "$expected_mirror"; then
+    echo "Refusing to adopt $ROOT/serlinolab: origin is $actual, expected $expected_mirror (including push URLs)." >&2
     setup_ok=0
   fi
 else
@@ -76,8 +94,8 @@ echo "Cloning your personal notes repo..."
 expected_personal="git@brain-personal:serlinolab/brain-personal-$PERSON_SLUG.git"
 if [ -e "$ROOT/personal/shared" ]; then
   actual=$(git -C "$ROOT/personal/shared" remote get-url origin 2>/dev/null || echo '<missing origin>')
-  if [ "$actual" != "$expected_personal" ]; then
-    echo "Refusing to adopt $ROOT/personal/shared: origin is $actual, expected $expected_personal." >&2
+  if ! remote_matches "$ROOT/personal/shared" "$expected_personal"; then
+    echo "Refusing to adopt $ROOT/personal/shared: origin is $actual, expected $expected_personal (including push URLs)." >&2
     setup_ok=0
   fi
 else

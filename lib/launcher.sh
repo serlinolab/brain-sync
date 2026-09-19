@@ -10,12 +10,33 @@ REMOTE="${BRAIN_SYNC_REMOTE:-https://github.com/serlinolab/brain-sync.git}"
 mkdir -p "$STATE"
 log(){ printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$LOG"; }
 
-if ! mkdir "$STATE/run.lock" 2>/dev/null; then
-  log "self-update: another cycle is running"
-  exit 0
-fi
-echo $$ > "$STATE/run.lock/pid"
-trap 'rm -rf "$STATE/run.lock"' EXIT INT TERM
+LOCK="$STATE/run.lock"
+acquire_lock(){
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    if [ -f "$LOCK/pid" ] && ! kill -0 "$(cat "$LOCK/pid" 2>/dev/null)" 2>/dev/null; then
+      local stale="$LOCK.stale.$$"
+      log "self-update: breaking stale lock from pid $(cat "$LOCK/pid")"
+      mv "$LOCK" "$stale" 2>/dev/null || return 1
+      if ! mkdir "$LOCK" 2>/dev/null; then
+        rm -rf "$stale"
+        return 1
+      fi
+      rm -rf "$stale"
+    else
+      log "self-update: another cycle is running"
+      return 1
+    fi
+  fi
+  echo $$ > "$LOCK/pid"
+  # shellcheck disable=SC2329  # invoked indirectly by trap
+  cleanup_lock(){
+    [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK"
+  }
+  trap 'cleanup_lock' EXIT
+  trap 'cleanup_lock; exit 130' INT
+  trap 'cleanup_lock; exit 143' TERM
+}
+acquire_lock || exit 0
 
 if [ ! -d "$ENGINE/.git" ]; then
   git clone --quiet "$REMOTE" "$ENGINE" >/dev/null 2>&1 || { log "self-update: initial clone failed"; exit 0; }
@@ -31,7 +52,7 @@ if git fetch --quiet origin main 2>/dev/null; then
       log "self-update: updated ${prev:-none} -> $new"
     else
       log "self-update: $new failed selfcheck, restoring ${prev:-none}"
-      [ -n "$prev" ] && git reset --quiet --hard "$prev" && git clean -ffdq
+      [ -n "$prev" ] && git reset --quiet --hard "$prev" && git clean -ffdqx
     fi
   fi
 fi

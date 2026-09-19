@@ -41,14 +41,22 @@ acquire_lock(){
       local stale="$LOCK.stale.$$"
       log "breaking stale lock from pid $(cat "$LOCK/pid")"
       mv "$LOCK" "$stale" 2>/dev/null || return 1
-      mkdir "$LOCK" 2>/dev/null || return 1
-      rm -f "$stale/pid"
-      rmdir "$stale" 2>/dev/null || true
+      if ! mkdir "$LOCK" 2>/dev/null; then
+        rm -rf "$stale"
+        return 1
+      fi
+      rm -rf "$stale"
     else
       return 1
     fi
   fi
   echo $$ > "$LOCK/pid"
-  trap 'rm -rf "$LOCK"' EXIT INT TERM
+  # shellcheck disable=SC2329  # invoked indirectly by trap
+  cleanup_lock(){
+    [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK"
+  }
+  trap 'cleanup_lock' EXIT
+  trap 'cleanup_lock; exit 130' INT
+  trap 'cleanup_lock; exit 143' TERM
   return 0
 }

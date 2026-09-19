@@ -28,11 +28,13 @@ teardown() { brain_test_teardown; }
   git -C "$root/serlinolab" remote set-url origin "$root/missing-origin.git"
   BRAIN_ROOT="$root" MIRROR="$root/serlinolab" run bash -c \
     "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; MIRROR='$root/serlinolab'; sync_mirror"
-  [ "$status" -ne 0 ]
+  local fetch_status=$status
   run bash -c "echo hi > '$root/serlinolab/sub/file.txt'"
-  [ "$status" -ne 0 ]
+  local write_status=$status
   chmod -R u+w "$root" 2>/dev/null || true
   rm -rf "$root"
+  [ "$fetch_status" -ne 0 ]
+  [ "$write_status" -ne 0 ]
 }
 
 @test "a failed mirror fetch leaves the mirror protected" {

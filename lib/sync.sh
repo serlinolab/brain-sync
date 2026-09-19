@@ -99,6 +99,14 @@ sync_personal(){
     return 3
   fi
   rm -f "$CONFLICT_STATE"
+  local fetch_url push_url
+  fetch_url=$(git remote get-url origin 2>/dev/null) || { log "personal remote missing"; return 1; }
+  while IFS= read -r push_url; do
+    if [ "$push_url" != "$fetch_url" ]; then
+      log "personal push URL does not match fetch URL; refusing push"
+      return 1
+    fi
+  done < <(git remote get-url --push --all origin 2>/dev/null)
   git push --quiet origin main 2>>"$LOG" || { log "push failed"; return 1; }
   log "personal at $(git rev-parse --short HEAD)"
 }

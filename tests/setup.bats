@@ -59,6 +59,42 @@ teardown() {
   [[ "$output" == *"found 'alice', requested 'bob'"* ]]
 }
 
+@test "person mismatch stops before cloning a missing personal checkout" {
+  mkdir -p "$HOME/Serlino/.state"
+  printf '%s\n' alice > "$HOME/Serlino/.state/person"
+  BRAIN_PERSON=bob run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  [ ! -e "$HOME/Serlino/personal/shared" ]
+  [[ "$output" == *"found 'alice', requested 'bob'"* ]]
+}
+
+@test "setup refuses a correct fetch URL with a foreign push URL" {
+  mkdir -p "$HOME/Serlino/personal/shared"
+  git init -q "$HOME/Serlino/personal/shared"
+  git -C "$HOME/Serlino/personal/shared" remote add origin 'git@brain-personal:serlinolab/brain-personal-alice.git'
+  git -C "$HOME/Serlino/personal/shared" remote set-url --add --push origin ssh://attacker.invalid/leak.git
+  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"including push URLs"* ]]
+}
+
+@test "setup does not adopt a child directory through a parent repository" {
+  git init -q "$HOME/Serlino"
+  git -C "$HOME/Serlino" remote add origin 'git@brain-mirror:serlinolab/Serlinolab-Brain.git'
+  mkdir -p "$HOME/Serlino/serlinolab"
+  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"including push URLs"* ]]
+}
+
+@test "malformed private keys do not leave an empty public key" {
+  mkdir -p "$HOME/.ssh"
+  printf 'not a key\n' > "$HOME/.ssh/brain_mirror_ed25519"
+  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  [ ! -e "$HOME/.ssh/brain_mirror_ed25519.pub" ]
+}
+
 @test "failed setup never writes the completion marker" {
   FAIL_MIRROR=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]

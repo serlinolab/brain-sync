@@ -12,12 +12,45 @@ teardown() { brain_test_teardown; rm -rf "$BRAIN_SYNC_WORK"; }
   [ "$status" -eq 0 ]   # the good update was adopted and actually runs
 
   break_origin_sync_sh
+  touch "$STATE/engine/ignored.tmp"
   BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" run bash "$REPO_ROOT/lib/launcher.sh" --selfcheck-only
   [ "$status" -eq 0 ]
   [ "$(git -C "$STATE/engine" rev-parse HEAD)" = "$good_sha" ]
+  [ ! -e "$STATE/engine/ignored.tmp" ]
   run bash "$STATE/engine/sync.sh" --selfcheck
   [ "$status" -eq 0 ]
   grep -q "failed selfcheck, restoring" "$LOG"
+}
+
+@test "a launcher lock left by a dead pid is taken over" {
+  BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" --selfcheck-only
+  ( sleep 0.1 ) & local deadpid=$!
+  wait "$deadpid" 2>/dev/null
+  mkdir -p "$STATE/run.lock"; echo "$deadpid" > "$STATE/run.lock/pid"
+  BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" run bash "$REPO_ROOT/lib/launcher.sh" --selfcheck-only
+  [ "$status" -eq 0 ]
+  grep -q "breaking stale lock from pid $deadpid" "$LOG"
+}
+
+@test "a launcher holder whose lock was stolen cannot delete the new owner's lock" {
+  BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" --selfcheck-only
+  cat > "$STATE/engine/sync.sh" <<'SCRIPT'
+#!/bin/bash
+sleep 0.5
+SCRIPT
+  chmod +x "$STATE/engine/sync.sh"
+  BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" &
+  local holder=$!
+  sleep 0.1
+  bash -c "echo \$\$ > '$STATE/run.lock/pid'; sleep 2" &
+  local owner=$!
+  sleep 0.1
+  kill -TERM "$holder"
+  wait "$holder" || [ "$?" -eq 143 ]
+  [ -d "$STATE/run.lock" ]
+  [ "$(cat "$STATE/run.lock/pid")" = "$owner" ]
+  kill "$owner"
+  wait "$owner" || [ "$?" -eq 143 ]
 }
 
 @test "the launcher lock prevents two self-update cycles from running together" {

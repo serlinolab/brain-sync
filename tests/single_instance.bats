@@ -35,3 +35,18 @@ teardown() { brain_test_teardown; }
   [ "$status" -ne 0 ]
   wait "$winner"
 }
+
+@test "a holder whose lock was stolen cannot delete the new owner's lock" {
+  bash -c "source '$REPO_ROOT/lib/common.sh'; acquire_lock; sleep 0.5" &
+  local holder=$!
+  sleep 0.1
+  bash -c "echo \$\$ > '$LOCK/pid'; sleep 2" &
+  local owner=$!
+  sleep 0.1
+  kill -TERM "$holder"
+  wait "$holder" || [ "$?" -eq 143 ]
+  [ -d "$LOCK" ]
+  [ "$(cat "$LOCK/pid")" = "$owner" ]
+  kill "$owner"
+  wait "$owner" || [ "$?" -eq 143 ]
+}
