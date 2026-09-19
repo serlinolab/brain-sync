@@ -13,3 +13,28 @@ teardown() { brain_test_teardown; }
   [ "$(git -C "$PERSONAL" rev-list --count origin/main..HEAD)" -eq 1 ]
   grep -q "offline; local work is committed" "$LOG"
 }
+
+@test "no network call precedes the local commit in the real entry point" {
+  # AC-3 is "before ANY network call", not "before the online guard". Comparing the two line
+  # numbers let `online || true` be inserted above commit_local and still pass. Read every
+  # line that executes before commit_local instead.
+  local at_commit head
+  at_commit=$(grep -n '^commit_local$' "$REPO_ROOT/sync.sh" | cut -d: -f1)
+  [ -n "$at_commit" ]
+  head=$(sed -n "1,$((at_commit - 1))p" "$REPO_ROOT/sync.sh")
+  run grep -nE '\bonline\b|fetch|push|pull|clone|ls-remote|curl' <<<"$head"
+  [ "$status" -ne 0 ]
+}
+
+@test "a commit carries the configured identity, not one git invented from the hostname" {
+  # NOT because git fails without a config - measured 2026-09-19, it does not: it derives
+  # <user>@<hostname>.local and commits happily. That is the defect. Every creator's notes
+  # would be attributed to their Mac's hostname, and MAX-1515 ties attribution to pay.
+  make_local_ahead_change
+  run_sync_cycle
+  # the expected value is written out, not read from the engine's own variable: comparing two
+  # things the engine computes would pass even when both are wrong. helpers.bash seeds
+  # $STATE/person with "testperson", exactly as setup.sh does on a real Mac.
+  [ "$(git -C "$PERSONAL" log -1 --format=%an)" = "Serlino Brain (testperson)" ]
+  [[ "$(git -C "$PERSONAL" log -1 --format=%ae)" == brain-testperson@* ]]
+}

@@ -16,6 +16,15 @@ teardown() { brain_test_teardown; }
   [ ! -f "$MARK" ]
 }
 
+@test "a backdated commit crosses the production threshold" {
+  echo old > "$PERSONAL/old.txt"
+  git -C "$PERSONAL" add old.txt
+  GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:00:00Z' \
+    git -C "$PERSONAL" -c user.name=fixture -c user.email=fixture@example.com commit -q -m old
+  STALE_HOURS=4 run bash "$REPO_ROOT/sync.sh"
+  [ -f "$MARK" ]
+}
+
 # Restored after Max lifted the diff cap: the two functional tests above prove
 # the marker appears while offline, which already fails if stale_check is moved
 # after the online() guard. They do NOT catch stale_check itself growing a
@@ -28,6 +37,8 @@ teardown() { brain_test_teardown; }
   [ -n "$at_stale" ] && [ -n "$at_online" ]
   [ "$at_stale" -lt "$at_online" ]
 
-  run bash -c "sed -n '/^stale_check()/,/^}/p' '$REPO_ROOT/lib/sync.sh' | grep -nE 'fetch|push|pull|clone|ls-remote|curl|online'"
+  # the measurement itself lives in unsynced_age_hours now, so check BOTH bodies - a network
+  # call moved into the helper would otherwise be invisible to this assertion
+  run bash -c "sed -n '/^stale_check()/,/^}/p;/^unsynced_age_hours()/,/^}/p' '$REPO_ROOT/lib/sync.sh' | grep -nE 'fetch|push|pull|clone|ls-remote|curl|online'"
   [ "$status" -ne 0 ]
 }

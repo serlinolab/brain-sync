@@ -10,6 +10,13 @@ REMOTE="${BRAIN_SYNC_REMOTE:-https://github.com/serlinolab/brain-sync.git}"
 mkdir -p "$STATE"
 log(){ printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$LOG"; }
 
+if ! mkdir "$STATE/run.lock" 2>/dev/null; then
+  log "self-update: another cycle is running"
+  exit 0
+fi
+echo $$ > "$STATE/run.lock/pid"
+trap 'rm -rf "$STATE/run.lock"' EXIT INT TERM
+
 if [ ! -d "$ENGINE/.git" ]; then
   git clone --quiet "$REMOTE" "$ENGINE" >/dev/null 2>&1 || { log "self-update: initial clone failed"; exit 0; }
 fi
@@ -30,4 +37,4 @@ if git fetch --quiet origin main 2>/dev/null; then
 fi
 
 [ "${1:-}" = "--selfcheck-only" ] && exit 0
-exec bash "$ENGINE/sync.sh"
+BRAIN_SYNC_LOCK_HELD=1 bash "$ENGINE/sync.sh"

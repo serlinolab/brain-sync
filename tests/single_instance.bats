@@ -10,9 +10,7 @@ teardown() { brain_test_teardown; }
     ( bash "$REPO_ROOT/tests/fixtures/lockrunner.sh" 0.5; echo $? > "$BRAIN_ROOT/rc_$i" ) &
   done
   wait
-  local ok=0
-  for i in 1 2 3; do [ "$(cat "$BRAIN_ROOT/rc_$i")" = "0" ] && ok=$((ok+1)); done
-  [ "$ok" -eq 1 ]
+  [ "$(grep -c 'offline; local work' "$LOG")" -eq 1 ]
 }
 
 @test "a lock left by a dead pid is broken rather than waited on forever" {
@@ -22,4 +20,8 @@ teardown() { brain_test_teardown; }
   run bash "$REPO_ROOT/tests/fixtures/lockrunner.sh" 0
   [ "$status" -eq 0 ]
   grep -q "breaking stale lock from pid $deadpid" "$LOG"
+}
+
+@test "stale-lock ownership transfer is an atomic rename" {
+  grep -q 'mv "\$LOCK" "\$stale"' "$REPO_ROOT/lib/common.sh"
 }

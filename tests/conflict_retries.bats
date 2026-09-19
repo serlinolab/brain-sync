@@ -12,7 +12,7 @@ teardown() { brain_test_teardown; }
 
 @test "conflict retries stop after the bound and park with a visible marker, without counting as another attempt" {
   echo "$MAX_CONFLICT_ATTEMPTS" > "$CONFLICT_STATE"
-  run sync_personal
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-personal.git" run bash "$REPO_ROOT/sync.sh"
   [ "$status" -eq 3 ]
   [ -f "$MARK" ]
   grep -q "not retrying" "$LOG"
@@ -26,10 +26,10 @@ make_real_divergence() {
   local other; other="$(mktemp -d)"
   git clone -q "$BRAIN_ROOT/origin-personal.git" "$other"
   echo "the team's line" > "$other/note.txt"
-  git -C "$other" commit -qam theirs && git -C "$other" push -q origin main
+  git -C "$other" add note.txt; git_commit "$other" theirs; git -C "$other" push -q origin main
   rm -rf "$other"
   echo "my line" > "$PERSONAL/note.txt"
-  git -C "$PERSONAL" commit -qam mine
+  git -C "$PERSONAL" add note.txt; git_commit "$PERSONAL" mine
 }
 
 @test "a real rebase conflict is counted from zero, retained locally, and abandoned at the bound" {
@@ -37,14 +37,14 @@ make_real_divergence() {
   [ ! -f "$CONFLICT_STATE" ]
 
   for n in 1 2 3; do
-    run sync_personal
+    ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-personal.git" run bash "$REPO_ROOT/sync.sh"
     [ "$status" -eq 3 ]
     [ "$(cat "$CONFLICT_STATE")" = "$n" ]
     [ "$(cat "$PERSONAL/note.txt")" = "my line" ]   # local content never lost
     [ -f "$MARK" ]
   done
 
-  run sync_personal                                  # at the bound: park, do not retry
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-personal.git" run bash "$REPO_ROOT/sync.sh" # at the bound: park, do not retry
   [ "$status" -eq 3 ]
   [ "$(cat "$CONFLICT_STATE")" = "$MAX_CONFLICT_ATTEMPTS" ]
   grep -q "not retrying" "$LOG"
