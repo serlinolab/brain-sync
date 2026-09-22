@@ -109,6 +109,38 @@ gh_lookup(){
   esac
 }
 
+# AC-1 Class C review fix 5: verifies a repo's identity (the exact org/name - never a rename
+# or redirect that `gh` silently followed) and privacy, for BOTH repositories this script
+# touches, before any key is registered or anything is created against either one. One lookup
+# covers both checks.
+# Return: 0 exists, full_name matches exactly, and private=true.
+#         1 confirmed absent (404) - only the team repo may be created by this script; the
+#           mirror repo never is, so a caller checking it must treat this like case 2.
+#         2 refused: not private, resolved to a different full_name, or the lookup itself
+#           failed (unknown, never treated as safe) - a message is already on stderr.
+verify_repo_identity(){
+  local repo="$1" row rc private full_name
+  row=$(gh_lookup "repos/$BRAIN_ORG/$repo" '[.private,.full_name] | @tsv'); rc=$?
+  case "$rc" in
+    0) : ;;
+    1) return 1 ;;
+    *)
+      echo "refusing: could not look up repo $BRAIN_ORG/$repo (the gh lookup failed - treated as unknown, never as absent)" >&2
+      return 2
+      ;;
+  esac
+  IFS=$'\t' read -r private full_name <<<"$row"
+  if [ "$full_name" != "$BRAIN_ORG/$repo" ]; then
+    echo "refusing: repo $BRAIN_ORG/$repo resolved to '$full_name' instead of '$BRAIN_ORG/$repo' - refusing to register a key against a renamed or redirected repo" >&2
+    return 2
+  fi
+  if [ "$private" != true ]; then
+    echo "refusing: repo $BRAIN_ORG/$repo already exists and is not private - refusing to touch it" >&2
+    return 2
+  fi
+  return 0
+}
+
 # AC-1: the team repo is created once, private, with an initial commit on main (so
 # origin/main exists for the first clone) containing a README that says in plain words the
 # folder is shared with the team.
@@ -117,28 +149,19 @@ gh_lookup(){
 # the initial commit landed, the repo exists but has no main branch - re-running used to
 # report success on that empty repo forever. Presence of README.md on main is now checked
 # separately from repo existence, and the initial commit is retried whenever it's missing.
-#
-# Class C fixes: (1) a lookup failure that isn't a definite 404 refuses instead of silently
-# creating a duplicate or skipping the README check. (2) an existing repo that is NOT private
-# is refused outright - this script never makes a repo public, and never proceeds against one
-# that already is.
 ensure_team_repo(){
-  local private rc
-  private=$(gh_lookup "repos/$BRAIN_ORG/$TEAM_REPO" '.private'); rc=$?
+  local rc
+  verify_repo_identity "$TEAM_REPO"; rc=$?
   case "$rc" in
     0)
       echo "repo $BRAIN_ORG/$TEAM_REPO already exists"
-      [ "$private" = true ] || refuse "repo $BRAIN_ORG/$TEAM_REPO already exists and is not private - refusing to touch it"
       ;;
     1)
       echo "creating private repo $BRAIN_ORG/$TEAM_REPO"
       [ "$DRY_RUN" -eq 1 ] && return 0
       "$GH" repo create "$BRAIN_ORG/$TEAM_REPO" --private --description "Serlino Brain - team folder" || return 1
       ;;
-    *)
-      echo "refusing: could not look up repo $BRAIN_ORG/$TEAM_REPO (the gh lookup failed - treated as unknown, never as absent)" >&2
-      return 1
-      ;;
+    *) return 1 ;;   # verify_repo_identity already printed the refusal
   esac
 
   gh_lookup "repos/$BRAIN_ORG/$TEAM_REPO/contents/README.md" >/dev/null; rc=$?
@@ -159,6 +182,17 @@ ensure_team_repo(){
 }
 
 ensure_team_repo || exit 1
+
+verify_repo_identity "$MIRROR_REPO"; mirror_rc=$?
+case "$mirror_rc" in
+  0) : ;;
+  1)
+    echo "refusing: repo $BRAIN_ORG/$MIRROR_REPO does not exist - it must already exist before keys can be registered against it (this script never creates it)" >&2
+    exit 1
+    ;;
+  *) exit 1 ;;   # verify_repo_identity already printed the refusal
+esac
+
 register_key "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || exit 1
 register_key "$TEAM_REPO" "brain-team $person $machine" "$team_key" false || exit 1
 echo "Provisioning complete for $person@$machine."

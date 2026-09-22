@@ -11,10 +11,14 @@
 #                                        stderr (a real transient failure), never "HTTP 404"
 #   FAKE_GH_README_5XX=1              - `api repos/ORG/REPO/contents/README.md` GET, same
 #
-# A repo's privacy is its marker file's content: "true" (private, what `repo create
-# --private` writes) or "false" (public). `api repos/ORG/REPO` echoes `{"private": <that>}`
-# and understands `--jq .private`, so a test can seed a public repo by writing "false" into
-# the marker file before running provision.sh.
+# A repo's marker file (`$STATE/repos/ORG__REPO`) is up to two lines: line 1 is privacy
+# ("true"/"false", what `repo create --private` writes - defaults to "true" if the line is
+# empty), line 2 is an optional full_name override (defaults to "ORG/REPO" - the exact name
+# requested - when absent, so every existing single-line fixture keeps working unchanged). A
+# test seeds a renamed/redirected repo by writing a different "org/repo" on line 2, and a
+# public repo by writing "false" on line 1. `api repos/ORG/REPO` echoes
+# `{"private": <p>, "full_name": "<f>"}` and understands `--jq .private` and
+# `--jq '[.private,.full_name] | @tsv'`.
 set -u
 STATE="${FAKE_GH_STATE:?FAKE_GH_STATE must be set}"
 PAGE_SIZE="${FAKE_GH_PAGE_SIZE:-30}"
@@ -117,12 +121,13 @@ case "$cmd" in
           echo "gh: Not Found (HTTP 404)" >&2
           exit 1
         fi
-        private=$(cat "$repofile" 2>/dev/null || echo true)
-        if [ "$jqexpr" = ".private" ]; then
-          echo "$private"
-        else
-          printf '{"private": %s}\n' "$private"
-        fi
+        private=$(sed -n '1p' "$repofile" 2>/dev/null); [ -n "$private" ] || private=true
+        full_name=$(sed -n '2p' "$repofile" 2>/dev/null); [ -n "$full_name" ] || full_name="$org/$repo"
+        case "$jqexpr" in
+          .private) echo "$private" ;;
+          *'@tsv'*) printf '%s\t%s\n' "$private" "$full_name" ;;
+          *) printf '{"private": %s, "full_name": "%s"}\n' "$private" "$full_name" ;;
+        esac
         exit 0
         ;;
       *) exit 1 ;;

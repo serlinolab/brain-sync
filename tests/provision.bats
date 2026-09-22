@@ -8,6 +8,12 @@ setup() {
   GH="$REPO_ROOT/tests/fixtures/fake_gh.sh"; export GH
   BRAIN_ORG="test-org"; export BRAIN_ORG
   LINE="SERLINO-BRAIN-SETUP person=alice machine=alices-mac mirror_key=ssh-ed25519 AAAAmirror brain-mirror-alices-mac team_key=ssh-ed25519 AAAAteam brain-team-alice"
+  # The mirror repo is never created by provision.sh (unlike the team repo) - it is assumed to
+  # already exist, private, under its real name. Every test gets that baseline for free;
+  # a test exercising review fix 5 overwrites this marker to simulate a rename/redirect or a
+  # repo gone public.
+  mkdir -p "$FAKE_GH_STATE/repos"
+  printf 'true\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain"
 }
 teardown() { rm -rf "$BRAIN_ROOT" "$FAKE_GH_STATE"; }
 
@@ -18,7 +24,9 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   run bash "$REPO_ROOT/provision.sh" "SERLINO-BRAIN-SETUP person=Alice! machine=m mirror_key=ssh-ed25519 AAAA c team_key=ssh-ed25519 AAAA c"
   [ "$status" -ne 0 ]
   [[ "$output" == *"Refusing"* ]] || false
-  [ ! -d "$FAKE_GH_STATE/repos" ] || [ -z "$(ls -A "$FAKE_GH_STATE/repos" 2>/dev/null)" ]
+  # only the pre-seeded mirror-repo fixture (setup() bootstraps it as "already exists" - see
+  # there) is present; nothing else was added, so no gh call was made
+  [ "$(ls -A "$FAKE_GH_STATE/repos" 2>/dev/null)" = "${BRAIN_ORG}__Serlinolab-Brain" ]
 }
 
 @test "refuses a malformed machine name" {
@@ -165,5 +173,45 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -ne 0 ]
   [[ "$output" == *"not private"* ]] || false
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
+}
+
+# --- Review fix 5: verify identity (full_name) and privacy for BOTH repositories, not just
+# the team repo's privacy, before registering any key. ---
+
+@test "refuses a team repo that resolved to a different full_name (renamed or redirected)" {
+  mkdir -p "$FAKE_GH_STATE/repos"
+  printf 'true\nother-org/brain-team\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team"
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"renamed or redirected"* ]] || false
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys")" ]
+}
+
+@test "refuses a mirror repo that resolved to a different full_name (renamed or redirected), and registers no keys" {
+  printf 'true\nother-org/Serlinolab-Brain\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain"
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"renamed or redirected"* ]] || false
+  # the team repo may already have been created by this run before the mirror check refused
+  # it - review fix 6 (a separate commit) makes every lookup precede every mutation, at which
+  # point this test is strengthened to also assert the team repo was never created
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys")" ]
+}
+
+@test "refuses a mirror repo that is public, and registers no keys" {
+  printf 'false\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain"
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not private"* ]] || false
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
+}
+
+@test "refuses when the mirror repo does not exist, and registers no keys" {
+  rm -f "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain"
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
 }
