@@ -151,62 +151,18 @@ TEAM="$ROOT/team"
 if [ "$team_ready" -eq 1 ]; then
   echo "Configuring the team folder so it can never carry instruction files..."
   # AC-4 structural layer: a colleague's CLAUDE.md/.claude never checks out here, at any
-  # depth. Verified (2026-09-22): non-cone patterns without a leading slash match at every
-  # depth on this git, so no **/ forms are needed.
-  git -C "$TEAM" sparse-checkout init --no-cone >/dev/null 2>&1 || setup_ok=0
-  cat > "$TEAM/.git/info/sparse-checkout" <<'EOF' || setup_ok=0
-/*
-!/serlinolab/
-!CLAUDE.md
-!CLAUDE.local.md
-!AGENTS.md
-!.claude/
-EOF
-  git -C "$TEAM" sparse-checkout reapply >/dev/null 2>&1 || setup_ok=0
-  # Local-only: keeps `git add -A` from ever staging the nested mirror clone as a gitlink.
-  grep -qxF 'serlinolab/' "$TEAM/.git/info/exclude" 2>/dev/null || printf 'serlinolab/\n' >> "$TEAM/.git/info/exclude"
+  # depth, regardless of whether they committed it as a file, a directory or a symlink.
+  # Verified (2026-09-22): non-cone patterns without a leading slash match at every depth on
+  # this git, so no **/ forms are needed. Shared with tests/helpers.bash via
+  # lib/team_layout.sh so the two can never drift apart.
+  # shellcheck source=lib/team_layout.sh
+  source "$ENGINE/lib/team_layout.sh" || setup_ok=0
+  write_team_sparse_checkout "$TEAM" || setup_ok=0
 
   echo "Installing the secret-scan hooks..."
-  install_team_hooks() {
-    local libdir="$STATE/engine/lib" hooks="$TEAM/.git/hooks"
-    mkdir -p "$hooks"
-    cat > "$hooks/pre-commit" <<'HOOK' || return 1
-#!/bin/bash
-set -u
-source "__LIBDIR__/secretscan.sh" 2>/dev/null || exit 0
-while IFS= read -r -d '' f; do
-  if secret_scan_file "$f"; then
-    printf 'refusing commit: %s looks like it contains a secret (a password or access key)\n' "$f" >&2
-    exit 1
-  fi
-done < <(git diff --cached --name-only -z)
-exit 0
-HOOK
-    cat > "$hooks/pre-push" <<'HOOK' || return 1
-#!/bin/bash
-set -u
-source "__LIBDIR__/secretscan.sh" 2>/dev/null || exit 0
-zero='0000000000000000000000000000000000000000'
-while read -r local_ref local_sha remote_ref remote_sha; do
-  [ "$local_sha" = "$zero" ] && continue
-  while IFS= read -r -d '' f; do
-    tmp=$(mktemp)
-    git show "$local_sha:$f" > "$tmp" 2>/dev/null
-    if secret_scan_file "$tmp"; then
-      rm -f "$tmp"
-      printf 'refusing push: %s looks like it contains a secret (a password or access key)\n' "$f" >&2
-      exit 1
-    fi
-    rm -f "$tmp"
-  done < <(git ls-tree -r --name-only -z "$local_sha")
-done
-exit 0
-HOOK
-    if sed -i '' "s#__LIBDIR__#$libdir#" "$hooks/pre-commit" "$hooks/pre-push" 2>/dev/null; then :
-    else sed -i "s#__LIBDIR__#$libdir#" "$hooks/pre-commit" "$hooks/pre-push"; fi
-    chmod +x "$hooks/pre-commit" "$hooks/pre-push"
-  }
-  install_team_hooks || setup_ok=0
+  # shellcheck source=lib/secretscan.sh
+  source "$ENGINE/lib/secretscan.sh" || setup_ok=0
+  install_team_hooks "$TEAM" "$STATE/engine/lib" || setup_ok=0
 
   echo "Cloning the company mirror..."
   expected_mirror='git@brain-mirror:serlinolab/Serlinolab-Brain.git'

@@ -14,6 +14,7 @@ setup_setup_test() {
   mkdir -p "$work/lib" "$work/templates"
   cp "$REPO_ROOT/lib/launcher.sh" "$work/lib/launcher.sh"
   cp "$REPO_ROOT/lib/secretscan.sh" "$work/lib/secretscan.sh"
+  cp "$REPO_ROOT/lib/team_layout.sh" "$work/lib/team_layout.sh"
   cp -r "$REPO_ROOT/templates/." "$work/templates/"
   git -C "$work" add -A; git -C "$work" -c user.name=fixture -c user.email=fixture@example.com commit -qm engine
   git -C "$work" remote add origin "$BRAIN_ROOT/repos/engine.git"; git -C "$work" push -q origin main
@@ -55,12 +56,22 @@ teardown() {
 }
 
 @test "setup refuses an unrelated existing team repository" {
-  mkdir -p "$HOME/Serlino"
+  # Must build a valid parker-v1 layout first, or setup's earlier AC-8 "not made by this
+  # setup" guard fires and this test never reaches the remote-mismatch refusal it means to
+  # exercise - it used to pass for the wrong reason (a bats-on-macOS-bash-3.2 gotcha:
+  # intermediate `[[ ]]` failures inside a @test do not fail the test, only `[ ]`/external
+  # commands do - see the note on the final `run git -C ... remote get-url` assertion below).
+  mkdir -p "$HOME/Serlino/.state"
+  printf 'parker-v1\n' > "$HOME/Serlino/.state/layout"
   git init -q "$HOME/Serlino/team"
   git -C "$HOME/Serlino/team" remote add origin https://unrelated.example/team.git
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"$HOME/Serlino/team"*"unrelated.example/team.git"* ]]
+  # grep, not `[[ ]]`: on macOS's bash 3.2, an intermediate `[[ ]]` failure inside a bats
+  # @test does NOT fail the test (only `[ ]`/external commands do - a real gotcha this test
+  # tripped on before this fix). grep -qF is an external command and fails the test properly.
+  printf '%s' "$output" | grep -qF "$HOME/Serlino/team"
+  printf '%s' "$output" | grep -qF "unrelated.example/team.git"
   [ ! -e "$HOME/Serlino/team/serlinolab" ]
 }
 

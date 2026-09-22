@@ -64,16 +64,39 @@ sync_mirror(){
   return "$rc"
 }
 
-# AC-4: BEFORE staging (and so before anything else in the cycle), move any locally-created
-# CLAUDE.md / CLAUDE.local.md / AGENTS.md / .claude anywhere under team/ - excluding
-# team/serlinolab, which is the brand's own and stays - into quarantine. Never deleted. A file
-# that arrived on THIS Mac from a colleague's push can never reach here in the first place:
-# the non-cone sparse-checkout on team/ refuses to check those names out at any depth. This
-# only ever catches something a creator typed directly into team/ on this Mac.
+# Class A #3: team/serlinolab must always be the real mirror clone - never a file, a symlink,
+# or a directory that isn't backed by its own .git. Anything else has no legitimate reason to
+# be there (a colleague's push can't put it there either - non-cone sparse-checkout refuses
+# to check `serlinolab` out at team root, see write_team_sparse_checkout). Quarantined, never
+# deleted; sync_mirror finding no .git there re-clones on the next cycle.
+guard_mirror_slot(){
+  [ -e "$MIRROR" ] || return 0
+  if [ -L "$MIRROR" ] || [ ! -d "$MIRROR" ] || ! git -C "$MIRROR" rev-parse --git-dir >/dev/null 2>&1; then
+    local ts dest; ts=$(date -u +%FT%TZ); dest="$QUARANTINE/$ts/serlinolab"
+    mkdir -p "$(dirname "$dest")"
+    mv "$MIRROR" "$dest"
+    log "quarantined invalid mirror slot at serlinolab (not a real clone) - it will be re-cloned"
+  fi
+}
+
+# AC-4 / Class A: move any locally-created CLAUDE.md / CLAUDE.local.md / AGENTS.md / .claude
+# anywhere under team/ - excluding team/serlinolab, which is the brand's own and stays - into
+# quarantine. Never deleted. Matched case-insensitively (APFS is case-insensitive: claude.md,
+# Agents.MD reach the same place a differently-cased name would), and -iname's default
+# no-follow behaviour means a symlink named one of these is quarantined as a link, never
+# dereferenced. Also quarantines any OTHER symlink under team/ (outside the mirror) whose
+# target resolves into the mirror or anywhere outside team/ - a colleague has no legitimate
+# reason to commit such a link, and one materialising here could only be locally created (the
+# sparse-checkout keeps a colleague's own symlink from ever checking out in the first place).
+#
+# Called BEFORE staging (so before anything else in the cycle) AND again after sync_team, on
+# every path - success, conflict-abort, and failure alike - because a rebase can occasionally
+# materialise a path the sparse-checkout would otherwise have refused to check out.
 quarantine_instructions(){
   [ -d "$TEAM" ] || return 0
+  guard_mirror_slot
   local ts; ts=$(date -u +%FT%TZ)
-  local f rel dest
+  local f rel dest target realtarget
   while IFS= read -r -d '' f; do
     rel="${f#"$TEAM"/}"
     dest="$QUARANTINE/$ts/$rel"
@@ -82,8 +105,27 @@ quarantine_instructions(){
     log "quarantined instruction file: $rel"
   done < <(find "$TEAM" \
              \( -path "$TEAM/.git" -o -path "$MIRROR" \) -prune -o \
-             \( -name 'CLAUDE.md' -o -name 'CLAUDE.local.md' -o -name 'AGENTS.md' -o -name '.claude' \) -print0 \
+             \( -iname 'CLAUDE.md' -o -iname 'CLAUDE.local.md' -o -iname 'AGENTS.md' -o -iname '.claude' \) -print0 \
              2>/dev/null)
+  while IFS= read -r -d '' f; do
+    rel="${f#"$TEAM"/}"
+    target=$(readlink "$f" 2>/dev/null) || continue
+    realtarget=$(cd "$(dirname "$f")" 2>/dev/null && realpath -q -- "$target" 2>/dev/null)
+    # Legitimate iff the symlink resolves to somewhere under team/ that is NOT the mirror.
+    # Anything else - resolves into the mirror, resolves outside team/ entirely, or could not
+    # be resolved at all (dangling) - gets quarantined.
+    case "$realtarget" in
+      "$MIRROR"|"$MIRROR"/*) ;;
+      "$TEAM"/*) continue ;;
+      *) ;;
+    esac
+    dest="$QUARANTINE/$ts/$rel"
+    mkdir -p "$(dirname "$dest")"
+    mv "$f" "$dest"
+    log "quarantined escaping symlink: $rel -> $target"
+  done < <(find "$TEAM" \
+             \( -path "$TEAM/.git" -o -path "$MIRROR" \) -prune -o \
+             -type l -print0 2>/dev/null)
   return 0
 }
 

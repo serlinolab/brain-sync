@@ -31,6 +31,10 @@ fi
 sync_mirror
 cycle_rc=$?
 sync_team || cycle_rc=$?
+# Class A #2: sweep again after the incoming update - success, conflict-abort, or failure
+# alike - since a rebase can occasionally materialise a path the sparse-checkout would
+# otherwise have refused to check out.
+quarantine_instructions
 what_changed
 update_attention_marker
 exit "$cycle_rc"

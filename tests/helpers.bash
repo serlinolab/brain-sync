@@ -50,21 +50,24 @@ make_fake_brain_sync_origin() {
   git -C "$BRAIN_SYNC_WORK" remote add origin "$FAKE_ORIGIN"; git -C "$BRAIN_SYNC_WORK" push -q origin main
 }
 
-# AC-4: mirrors the sparse-checkout + local exclude setup.sh performs once, for tests that
-# need $TEAM to behave the way a real set-up Mac's team/ clone would (colleagues' instruction
-# files never check out; the nested mirror is never staged as a gitlink).
+# AC-4: installs the SAME sparse-checkout + local exclude setup.sh installs on a real Mac -
+# lib/team_layout.sh is the one place that pattern is written, sourced by both setup.sh and
+# this helper, so a test can never assert against a pattern setup.sh does not actually ship.
 configure_team_sparse_checkout() {
-  git -C "$TEAM" sparse-checkout init --no-cone >/dev/null 2>&1
-  cat > "$TEAM/.git/info/sparse-checkout" <<'EOF'
-/*
-!/serlinolab/
-!CLAUDE.md
-!CLAUDE.local.md
-!AGENTS.md
-!.claude/
-EOF
-  git -C "$TEAM" sparse-checkout reapply >/dev/null 2>&1
-  grep -qxF 'serlinolab/' "$TEAM/.git/info/exclude" 2>/dev/null || printf 'serlinolab/\n' >> "$TEAM/.git/info/exclude"
+  # shellcheck source=../lib/team_layout.sh
+  source "$REPO_ROOT/lib/team_layout.sh"
+  write_team_sparse_checkout "$TEAM"
+}
+
+# Class B: installs the SAME pre-commit/pre-push hooks setup.sh installs - lib/secretscan.sh
+# is the one place their bodies are written, so a test can never assert against a hook body
+# setup.sh does not actually ship. $1 (optional) overrides the library directory the hooks
+# source; defaults to the repo's own lib/, which is what a real Mac's cloned engine copy at
+# .state/engine/lib would contain.
+install_test_team_hooks() {
+  # shellcheck source=../lib/secretscan.sh
+  source "$REPO_ROOT/lib/secretscan.sh"
+  install_team_hooks "$TEAM" "${1:-$REPO_ROOT/lib}"
 }
 
 break_origin_sync_sh() {
