@@ -50,3 +50,30 @@ teardown() { brain_test_teardown; }
   # rebases - a push URL mismatch is one case of an origin not matching EXPECTED_TEAM_REMOTE.
   grep -q "does not match the expected remote" "$LOG"
 }
+
+@test "a failing push-url enumeration refuses rather than being read as a match" {
+  # MAX-1515 fix 2: remote_matches_expected reads `git remote get-url --push --all origin`
+  # through a bare `while read < <(...)`, which hides that command's own exit status - if it
+  # fails outright (network hiccup, corrupt config), the loop just sees 0 lines of input and
+  # falls through to `return 0` as if every push URL had matched. Injecting a git that fails
+  # only that call proves the fetch-URL check right above it is not what is protecting here.
+  local fakebin real_git
+  fakebin="$(mktemp -d)"; real_git="$(type -P git)"
+  cat > "$fakebin/git" <<'SCRIPT'
+#!/bin/bash
+case "$*" in
+  *"remote get-url --push --all origin"*)
+    echo "fatal: injected failure" >&2
+    exit 128
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+SCRIPT
+  chmod +x "$fakebin/git"
+  echo "my note" > "$TEAM/mine.txt"
+  REAL_GIT="$real_git" PATH="$fakebin:$PATH" \
+    run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; sync_team"
+  [ "$status" -ne 0 ] || false
+  # never staged, rebased, or pushed - phase 1 refused before any of that
+  git -C "$TEAM" status --porcelain | grep -qF "?? mine.txt"
+}

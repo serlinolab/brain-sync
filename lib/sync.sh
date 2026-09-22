@@ -9,13 +9,18 @@ online(){ git ls-remote --exit-code "$ONLINE_CHECK_REMOTE" HEAD >/dev/null 2>&1;
 # pointing at the WRONG remote would otherwise sail through). Missing dir/.git is not a
 # mismatch - every caller already guards that separately.
 remote_matches_expected(){
-  local dir="$1" expected="$2" url
+  local dir="$1" expected="$2" url push_urls
   [ -d "$dir/.git" ] || return 0
   url=$(git -C "$dir" remote get-url origin 2>/dev/null) || return 1
   [ "$url" = "$expected" ] || return 1
+  # MAX-1515 fix 2: capture the command's own output AND exit status before reading it - a
+  # `while read < <(cmd)` here would hide cmd's failure (0 lines of output looks identical to
+  # "loop ran and every line matched"), silently treating a failed lookup as a match.
+  push_urls=$(git -C "$dir" remote get-url --push --all origin 2>/dev/null) || return 1
+  [ -n "$push_urls" ] || return 1
   while IFS= read -r url; do
     [ "$url" = "$expected" ] || return 1
-  done < <(git -C "$dir" remote get-url --push --all origin 2>/dev/null)
+  done <<<"$push_urls"
   return 0
 }
 
