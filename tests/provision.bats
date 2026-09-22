@@ -83,7 +83,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   FAKE_GH_FAIL_KEYS_LOOKUP=1 run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -ne 0 ]
   [[ "$output" == *"could not look up existing deploy keys"* ]] || false
-  ! repo_exists "$BRAIN_ORG/brain-team"
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team" ]
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
 }
 
@@ -140,7 +140,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
 @test "--dry-run prints intent and mutates nothing" {
   run bash "$REPO_ROOT/provision.sh" --dry-run "$LINE"
   [ "$status" -eq 0 ]
-  ! repo_exists "$BRAIN_ORG/brain-team"
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team" ]
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
 }
 
@@ -154,7 +154,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
 @test "refuses when the repo-view lookup fails with a 5xx, and creates nothing" {
   FAKE_GH_REPO_VIEW_5XX=1 run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -ne 0 ]
-  ! repo_exists "$BRAIN_ORG/brain-team"
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team" ]
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
 }
 
@@ -194,9 +194,9 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -ne 0 ]
   [[ "$output" == *"renamed or redirected"* ]] || false
-  # the team repo may already have been created by this run before the mirror check refused
-  # it - review fix 6 (a separate commit) makes every lookup precede every mutation, at which
-  # point this test is strengthened to also assert the team repo was never created
+  # review fix 6: every lookup precedes every mutation, so the mirror check refusing means the
+  # team repo was never created either, even though the team repo is otherwise fine
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team" ]
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys")" ]
 }

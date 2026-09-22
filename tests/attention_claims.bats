@@ -17,7 +17,8 @@ teardown() { brain_test_teardown; }
   run bash "$REPO_ROOT/sync.sh"
   [ "$status" -eq 0 ]
   [ ! -f "$MARK" ]
-  ! grep -q REJECT "$LOG"
+  run grep -q REJECT "$LOG"
+  [ "$status" -ne 0 ]
 
   dd if=/dev/zero of="$TEAM/huge.bin" bs=1024 count=10241 2>/dev/null
   run bash "$REPO_ROOT/sync.sh"

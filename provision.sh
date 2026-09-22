@@ -181,18 +181,35 @@ ensure_team_repo(){
     -f message="Initial commit" -f content="$content" -f branch=main >/dev/null
 }
 
-ensure_team_repo || exit 1
+# Class C review fix 6: every lookup and validation this run will need - repo identity and
+# privacy for BOTH repositories, and the key-registration decision for BOTH keys - runs here.
+# Nothing in this function mutates anything while DRY_RUN is forced to 1 below (ensure_team_repo
+# and register_key both already gate their one mutating call on it), so calling it once as a
+# pre-flight check means a failure discovered on the second or third step - a lookup, a
+# conflict, a read_only mismatch - can never leave the first step's mutation (creating the team
+# repo) already applied.
+run_checks(){
+  ensure_team_repo || return 1
 
-verify_repo_identity "$MIRROR_REPO"; mirror_rc=$?
-case "$mirror_rc" in
-  0) : ;;
-  1)
-    echo "refusing: repo $BRAIN_ORG/$MIRROR_REPO does not exist - it must already exist before keys can be registered against it (this script never creates it)" >&2
-    exit 1
-    ;;
-  *) exit 1 ;;   # verify_repo_identity already printed the refusal
-esac
+  verify_repo_identity "$MIRROR_REPO"; local mirror_rc=$?
+  case "$mirror_rc" in
+    0) : ;;
+    1)
+      echo "refusing: repo $BRAIN_ORG/$MIRROR_REPO does not exist - it must already exist before keys can be registered against it (this script never creates it)" >&2
+      return 1
+      ;;
+    *) return 1 ;;   # verify_repo_identity already printed the refusal
+  esac
 
-register_key "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || exit 1
-register_key "$TEAM_REPO" "brain-team $person $machine" "$team_key" false || exit 1
+  register_key "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || return 1
+  register_key "$TEAM_REPO" "brain-team $person $machine" "$team_key" false || return 1
+}
+
+requested_dry_run="$DRY_RUN"
+DRY_RUN=1
+run_checks || exit 1
+DRY_RUN="$requested_dry_run"
+[ "$requested_dry_run" -eq 1 ] && exit 0
+
+run_checks || exit 1
 echo "Provisioning complete for $person@$machine."
