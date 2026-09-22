@@ -4,6 +4,7 @@
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
+source "$DIR/lib/secretscan.sh"
 source "$DIR/lib/sync.sh"
 
 # Self-update's smoke test: proves this copy sources cleanly and can run,
@@ -13,6 +14,7 @@ source "$DIR/lib/sync.sh"
 if [ "${BRAIN_SYNC_LOCK_HELD:-0}" != 1 ]; then acquire_lock || exit 0; fi
 [ -n "${SYNC_HOLD_SECONDS:-}" ] && sleep "$SYNC_HOLD_SECONDS"
 person_warn
+quarantine_instructions
 commit_local
 commit_rc=$?
 if [ "$commit_rc" -eq 1 ]; then
@@ -28,7 +30,7 @@ if ! online; then
 fi
 sync_mirror
 cycle_rc=$?
-sync_personal || cycle_rc=$?
+sync_team || cycle_rc=$?
 what_changed
 update_attention_marker
 exit "$cycle_rc"

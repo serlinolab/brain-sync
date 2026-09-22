@@ -4,11 +4,12 @@ brain_test_setup() {
   BRAIN_ROOT="$(mktemp -d)"; export BRAIN_ROOT
   HOME="$(mktemp -d)"; export HOME
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/no-such-remote"; export ONLINE_CHECK_REMOTE
-  ROOT="$BRAIN_ROOT"; STATE="$ROOT/.state"; MIRROR="$ROOT/serlinolab"
-  PERSONAL="$ROOT/personal/shared"; MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
+  ROOT="$BRAIN_ROOT"; STATE="$ROOT/.state"; TEAM="$ROOT/team"; MIRROR="$TEAM/serlinolab"
+  PERSONAL="$ROOT/personal"; MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
   LOCK="$STATE/run.lock"; LOG="$STATE/sync.log"; CONFLICT_STATE="$STATE/conflict_attempts"
+  CONFLICTS="$STATE/conflicts"; QUARANTINE="$STATE/quarantine"
   MAX_CONFLICT_ATTEMPTS=3
-  export ROOT STATE MIRROR PERSONAL MARK LOCK LOG CONFLICT_STATE MAX_CONFLICT_ATTEMPTS
+  export ROOT STATE TEAM MIRROR PERSONAL MARK LOCK LOG CONFLICT_STATE CONFLICTS QUARANTINE MAX_CONFLICT_ATTEMPTS
   mkdir -p "$STATE"
   printf 'testperson\n' > "$STATE/person"   # setup.sh writes this on a real Mac
 }
@@ -31,9 +32,11 @@ seed_repo() {
   mkdir -p "$(dirname "$dest")"; git clone -q "$origin" "$dest"; rm -rf "$tmp"
 }
 
-make_fake_personal_repo() { seed_repo "$BRAIN_ROOT/origin-personal.git" "$BRAIN_ROOT/personal/shared" note.txt; }
-make_fake_mirror() { seed_repo "$BRAIN_ROOT/origin-mirror.git" "$BRAIN_ROOT/serlinolab" sub/file.txt; ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git"; export ONLINE_CHECK_REMOTE; run_sync_cycle; }
-make_local_ahead_change() { echo 'unsent note' >> "$BRAIN_ROOT/personal/shared/note.txt"; }
+# MAX-1515: the two-way repo is now $TEAM (team/), with the read-only mirror nested inside it
+# at $TEAM/serlinolab. make_fake_team_repo replaces make_fake_personal_repo.
+make_fake_team_repo() { seed_repo "$BRAIN_ROOT/origin-team.git" "$TEAM" note.txt; }
+make_fake_mirror() { mkdir -p "$TEAM"; seed_repo "$BRAIN_ROOT/origin-mirror.git" "$MIRROR" sub/file.txt; ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git"; export ONLINE_CHECK_REMOTE; run_sync_cycle; }
+make_local_ahead_change() { echo 'unsent note' >> "$TEAM/note.txt"; }
 run_sync_cycle() { bash "$REPO_ROOT/sync.sh"; }
 
 make_fake_brain_sync_origin() {

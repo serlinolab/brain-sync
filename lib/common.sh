@@ -4,15 +4,17 @@
 # tests (override BRAIN_ROOT in tests instead of the real $HOME/Serlino).
 ROOT="${BRAIN_ROOT:-$HOME/Serlino}"
 STATE="$ROOT/.state"
-MIRROR="$ROOT/serlinolab"
-TEAM="$ROOT/team"
-PERSONAL="$ROOT/personal/shared"
+TEAM="$ROOT/team"                 # MAX-1515: two-way, everyone writes
+MIRROR="$TEAM/serlinolab"         # MAX-1515: nested inside team/, read-only
+PERSONAL="$ROOT/personal"         # MAX-1515: plain folders, no git, engine never touches this
 LOG="$STATE/sync.log"
 MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
 LOCK="$STATE/run.lock"
 STALE_HOURS="${STALE_HOURS:-4}"
 CONFLICT_STATE="$STATE/conflict_attempts"
 MAX_CONFLICT_ATTEMPTS=3          # AC-5: named constant, never a literal in the check
+CONFLICTS="$STATE/conflicts"      # AC-6: incoming copy of each conflicting file is saved here
+QUARANTINE="$STATE/quarantine"    # AC-4: locally-created instruction files are moved here, never deleted
 ONLINE_CHECK_REMOTE="${ONLINE_CHECK_REMOTE:-git@brain-mirror:serlinolab/Serlinolab-Brain.git}"
 # Written once by setup.sh. It used to fall back to `basename "$PERSONAL"`, which is the
 # literal string "shared" for everyone - every creator's notes would have been committed as
