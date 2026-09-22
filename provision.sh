@@ -49,9 +49,14 @@ team_key=$(printf '%s' "$LINE" | sed -nE 's/.*team_key=(.*)$/\1/p')
 #  4. Only the key MATERIAL (type + base64 blob, the first two whitespace-separated fields)
 #     is compared - not the trailing comment, which GitHub does not treat as part of the key
 #     and which our own re-runs regenerate per machine/person anyway.
-register_key(){
+#
+# MAX-1515 fix 1: read-only. Never mutates. Sets $NEED_REGISTER to 0 (already registered
+# correctly - phase 2 has nothing to do) or 1 (phase 2 must register it). The GET this makes is
+# the ONLY deploy-keys lookup for this repo across the whole run - phase 2 must not repeat it.
+register_key_check(){
   local repo="$1" title="$2" key="$3" want_ro="$4"
   local key_material; key_material=$(awk '{print $1, $2}' <<<"$key")
+  NEED_REGISTER=1
 
   local rows
   if ! rows=$("$GH" api --paginate "repos/$BRAIN_ORG/$repo/keys" --jq '.[] | [.title,.key,.read_only] | @tsv' 2>/dev/null); then
@@ -73,6 +78,7 @@ register_key(){
         return 1
       fi
       echo "already registered: '$title' on $repo"
+      NEED_REGISTER=0
       return 0
     fi
     if [ "$material" = "$key_material" ]; then
@@ -81,8 +87,14 @@ register_key(){
     fi
   done <<<"$rows"
 
+  echo "will register deploy key '$title' on $repo (read_only=$want_ro)"
+  return 0
+}
+
+# Mutation only, no GET - assumes register_key_check already decided this is needed.
+register_key_mutate(){
+  local repo="$1" title="$2" key="$3" want_ro="$4"
   echo "registering deploy key '$title' on $repo (read_only=$want_ro)"
-  [ "$DRY_RUN" -eq 1 ] && return 0
   "$GH" api "repos/$BRAIN_ORG/$repo/keys" -f title="$title" -f key="$key" -F "read_only=$want_ro" >/dev/null
 }
 
@@ -149,56 +161,64 @@ verify_repo_identity(){
 # the initial commit landed, the repo exists but has no main branch - re-running used to
 # report success on that empty repo forever. Presence of README.md on main is now checked
 # separately from repo existence, and the initial commit is retried whenever it's missing.
-ensure_team_repo(){
+#
+# MAX-1515 fix 1: read-only. Never mutates. Sets $NEED_CREATE_REPO and $NEED_README so phase 2
+# knows exactly what to do without looking anything up itself. A repo that does not exist yet
+# always needs both; an existing repo's README is checked on its own (this is also what makes
+# --dry-run notice a 5xx here, since this now runs in phase 1, before it).
+team_repo_check(){
+  NEED_CREATE_REPO=0
+  NEED_README=0
   local rc
   verify_repo_identity "$TEAM_REPO"; rc=$?
   case "$rc" in
-    0)
-      echo "repo $BRAIN_ORG/$TEAM_REPO already exists"
-      ;;
-    1)
-      echo "creating private repo $BRAIN_ORG/$TEAM_REPO"
-      [ "$DRY_RUN" -eq 1 ] && return 0
-      "$GH" repo create "$BRAIN_ORG/$TEAM_REPO" --private --description "Serlino Brain - team folder" || return 1
-      ;;
+    0) : ;;   # exists - the README check below decides NEED_README
+    1) NEED_CREATE_REPO=1; NEED_README=1; return 0 ;;   # confirmed absent - phase 2 creates + seeds it
     *) return 1 ;;   # verify_repo_identity already printed the refusal
   esac
 
   gh_lookup "repos/$BRAIN_ORG/$TEAM_REPO/contents/README.md" >/dev/null; rc=$?
   case "$rc" in
-    0) return 0 ;;
-    1) : ;;   # confirmed absent - fall through and create the initial commit
+    0) return 0 ;;   # has its initial commit already
+    1) NEED_README=1; return 0 ;;   # confirmed absent - phase 2 retries the initial commit
     *)
       echo "refusing: could not look up README.md on $BRAIN_ORG/$TEAM_REPO (the gh lookup failed - treated as unknown, never as absent)" >&2
       return 1
       ;;
   esac
-  echo "repo $BRAIN_ORG/$TEAM_REPO has no initial commit yet - creating it"
-  [ "$DRY_RUN" -eq 1 ] && return 0
-  local content
-  content=$(base64 < "$TEAM_README_TEMPLATE" | tr -d '\n')
-  "$GH" api -X PUT "repos/$BRAIN_ORG/$TEAM_REPO/contents/README.md" \
-    -f message="Initial commit" -f content="$content" -f branch=main >/dev/null
 }
 
-# MAX-1515 fixes 2/3: phase 1 is every read-only check this run will need - repo identity and
-# privacy for BOTH repositories, and the key-registration decision for BOTH keys - and it
-# structurally never mutates anything (`dry` forces a function's own DRY_RUN gate on for the
-# one call, regardless of what was requested on the command line, so phase 1 reuses
-# register_key's existing check logic - title/key/read_only - without ever reaching its
-# mutating branch). A team repo that does not exist yet is not a failure here: there is no
-# keys endpoint to look up on a repo that does not exist, so that check is skipped and left to
-# phase 2, which creates the repo first (fix 2 - a first-ever provisioning used to look up
-# keys on the not-yet-created team repo and refuse every time).
-dry(){ local saved="$DRY_RUN"; DRY_RUN=1; "$@"; local rc=$?; DRY_RUN="$saved"; return "$rc"; }
+# Mutations only - no GETs, no decisions, everything it needs was decided in team_repo_check.
+team_repo_mutate(){
+  if [ "$NEED_CREATE_REPO" -eq 1 ]; then
+    echo "creating private repo $BRAIN_ORG/$TEAM_REPO"
+    "$GH" repo create "$BRAIN_ORG/$TEAM_REPO" --private --description "Serlino Brain - team folder" || return 1
+  fi
+  if [ "$NEED_README" -eq 1 ]; then
+    echo "repo $BRAIN_ORG/$TEAM_REPO has no initial commit yet - creating it"
+    local content
+    content=$(base64 < "$TEAM_README_TEMPLATE" | tr -d '\n')
+    "$GH" api -X PUT "repos/$BRAIN_ORG/$TEAM_REPO/contents/README.md" \
+      -f message="Initial commit" -f content="$content" -f branch=main >/dev/null || return 1
+  fi
+}
 
+# MAX-1515 fixes 1/2/3: phase 1 is every read-only check this run will need - repo identity and
+# privacy for BOTH repositories, the team repo's README-exists state, and the key-registration
+# decision for BOTH keys - and it structurally never mutates anything (team_repo_check and
+# register_key_check never call a mutating gh command). It records every decision into
+# NEED_CREATE_REPO / NEED_README / NEED_MIRROR_KEY / NEED_TEAM_KEY, so phase 2 (below) can
+# perform exactly those mutations without looking any of it up again - not even a second
+# deploy-keys GET to double-check what phase 1 already established (fix 1: that repeat GET
+# used to mean a transient failure there could leave phase 2's earlier mutations - the README
+# commit, the mirror key - stuck registered while the run still reported failure).
+#
+# A team repo that does not exist yet is not a failure here: there is no keys endpoint to look
+# up on a repo that does not exist, so its key always needs registering and no lookup is
+# attempted (fix 2 - a first-ever provisioning used to look up keys on the not-yet-created team
+# repo and refuse every time).
 phase1_checks(){
-  verify_repo_identity "$TEAM_REPO"; local team_rc=$? team_exists=0
-  case "$team_rc" in
-    0) team_exists=1 ;;
-    1) team_exists=0 ;;   # confirmed absent - fine, phase 2 creates it
-    *) return 1 ;;   # verify_repo_identity already printed the refusal
-  esac
+  team_repo_check || return 1
 
   verify_repo_identity "$MIRROR_REPO"; local mirror_rc=$?
   case "$mirror_rc" in
@@ -210,20 +230,28 @@ phase1_checks(){
     *) return 1 ;;   # verify_repo_identity already printed the refusal
   esac
 
-  dry register_key "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || return 1
-  if [ "$team_exists" -eq 1 ]; then
-    dry register_key "$TEAM_REPO" "brain-team $person $machine" "$team_key" false || return 1
+  register_key_check "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || return 1
+  NEED_MIRROR_KEY="$NEED_REGISTER"
+
+  if [ "$NEED_CREATE_REPO" -eq 1 ]; then
+    NEED_TEAM_KEY=1
+  else
+    register_key_check "$TEAM_REPO" "brain-team $person $machine" "$team_key" false || return 1
+    NEED_TEAM_KEY="$NEED_REGISTER"
   fi
 }
 
-# Mutations only, and only ever called once phase1_checks has passed in full.
+# Mutations only, and only ever called once phase1_checks has passed in full. Issues no GETs.
 # ponytail: a concurrent external change to either repo between phase 1 and phase 2 is not
 # guarded here - single operator, seconds apart, running this by hand once per new person/Mac.
 phase2_mutate(){
-  ensure_team_repo || return 1
-  register_key "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || return 1
-  register_key "$TEAM_REPO" "brain-team $person $machine" "$team_key" false || return 1
+  team_repo_mutate || return 1
+  [ "$NEED_MIRROR_KEY" -eq 1 ] && { register_key_mutate "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || return 1; }
+  [ "$NEED_TEAM_KEY" -eq 1 ] && { register_key_mutate "$TEAM_REPO" "brain-team $person $machine" "$team_key" false || return 1; }
+  return 0
 }
+
+NEED_CREATE_REPO=0; NEED_README=0; NEED_MIRROR_KEY=0; NEED_TEAM_KEY=0
 
 phase1_checks || exit 1
 [ "$DRY_RUN" -eq 1 ] && exit 0

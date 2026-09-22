@@ -12,6 +12,14 @@
 #   FAKE_GH_REPO_VIEW_5XX=1           - `api repos/ORG/REPO` GET exits 1 with "HTTP 500" on
 #                                        stderr (a real transient failure), never "HTTP 404"
 #   FAKE_GH_README_5XX=1              - `api repos/ORG/REPO/contents/README.md` GET, same
+#   FAKE_GH_KEYS_LOOKUP_FAIL_CALL=<n> - the Nth GET (1-indexed, counted per repo - see
+#                                        <repo>.keys.get_count below) to a repo's keys endpoint
+#                                        exits 1 instead of succeeding; combine with
+#                                        FAKE_GH_KEYS_LOOKUP_FAIL_REPO to scope it to one repo
+#                                        (default: any repo). MAX-1515 fix 1: phase 2 must issue
+#                                        zero keys GETs of its own, so a correct run only ever
+#                                        makes ONE such GET per repo - this lets a test fail the
+#                                        second one and prove a regression would be caught.
 #
 # A repo's marker file (`$STATE/repos/ORG__REPO`) is up to two lines: line 1 is privacy
 # ("true"/"false", what `repo create --private` writes - defaults to "true" if the line is
@@ -71,6 +79,14 @@ case "$cmd" in
           # every other endpoint here already decides existence.
           if [ ! -e "$STATE/repos/${org}__${repo}" ]; then
             echo "gh: Not Found (HTTP 404)" >&2
+            exit 1
+          fi
+          countfile="$STATE/repos/${org}__${repo}.keys.get_count"
+          call_n=$(( $(cat "$countfile" 2>/dev/null || echo 0) + 1 ))
+          printf '%s' "$call_n" > "$countfile"
+          if [ -n "${FAKE_GH_KEYS_LOOKUP_FAIL_CALL:-}" ] && [ "$call_n" = "$FAKE_GH_KEYS_LOOKUP_FAIL_CALL" ] \
+             && { [ -z "${FAKE_GH_KEYS_LOOKUP_FAIL_REPO:-}" ] || [ "${FAKE_GH_KEYS_LOOKUP_FAIL_REPO:-}" = "$repo" ]; }; then
+            echo "gh: Internal Server Error (HTTP 500)" >&2
             exit 1
           fi
           touch "$keyfile"

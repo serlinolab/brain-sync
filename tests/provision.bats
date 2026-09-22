@@ -236,3 +236,31 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   [ "$status" -ne 0 ]
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
 }
+
+# --- MAX-1515 fix 1: phase 1 performs every lookup this run needs (including the README-exists
+# check on an already-existing team repo, which used to live only in phase 2's ensure_team_repo
+# and so was invisible to --dry-run); phase 2 performs only the mutations phase 1 already
+# decided on, issuing NO GETs of its own - not even a second deploy-keys lookup to double-check
+# what phase 1 already established. ---
+
+@test "phase 2 issues no second deploy-keys GET - a lookup that would only fail on a repeat still lets provisioning succeed" {
+  mkdir -p "$FAKE_GH_STATE/repos"
+  printf 'true\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team"
+  touch "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.readme"
+  FAKE_GH_KEYS_LOOKUP_FAIL_REPO=brain-team FAKE_GH_KEYS_LOOKUP_FAIL_CALL=2 \
+    run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -eq 0 ] || false
+  [ "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys.get_count")" = 1 ]
+  [ "$(key_line_count "$BRAIN_ORG/brain-team")" = 1 ]
+}
+
+@test "--dry-run fails when the README lookup 5xxs on an already-existing team repo" {
+  # Before fix 1, this check lived only in phase 2's ensure_team_repo, which --dry-run never
+  # reaches - a dry run reported success on a repo it could not actually have provisioned.
+  mkdir -p "$FAKE_GH_STATE/repos"
+  printf 'true\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team"
+  touch "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.readme"
+  FAKE_GH_README_5XX=1 run bash "$REPO_ROOT/provision.sh" --dry-run "$LINE"
+  [ "$status" -ne 0 ] || false
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
+}
