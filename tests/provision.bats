@@ -276,3 +276,15 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   if repo_exists "$BRAIN_ORG/brain-team"; then false; fi
   [ ! -s "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ]
 }
+
+@test "refuses an unreadable README template before creating anything" {
+  local bare; bare="$(mktemp -d)"
+  cp "$REPO_ROOT/provision.sh" "$bare/provision.sh"
+  mkdir "$bare/templates"; echo "readme" > "$bare/templates/team-repo-README.md"
+  chmod 000 "$bare/templates/team-repo-README.md"
+  run bash "$bare/provision.sh" "$LINE"
+  chmod 644 "$bare/templates/team-repo-README.md"; rm -rf "$bare"
+  [ "$status" -ne 0 ]
+  if repo_exists "$BRAIN_ORG/brain-team"; then false; fi
+  [ ! -s "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ]
+}

@@ -196,10 +196,8 @@ team_repo_mutate(){
   fi
   if [ "$NEED_README" -eq 1 ]; then
     echo "repo $BRAIN_ORG/$TEAM_REPO has no initial commit yet - creating it"
-    local content
-    content=$(base64 < "$TEAM_README_TEMPLATE" | tr -d '\n') && [ -n "$content" ] || return 1
     "$GH" api -X PUT "repos/$BRAIN_ORG/$TEAM_REPO/contents/README.md" \
-      -f message="Initial commit" -f content="$content" -f branch=main >/dev/null || return 1
+      -f message="Initial commit" -f content="$README_CONTENT" -f branch=main >/dev/null || return 1
   fi
 }
 
@@ -218,8 +216,9 @@ team_repo_mutate(){
 # attempted (fix 2 - a first-ever provisioning used to look up keys on the not-yet-created team
 # repo and refuse every time).
 phase1_checks(){
-  # A missing template would base64 to an empty README committed in phase 2, reported as success.
-  [ -s "$TEAM_README_TEMPLATE" ] || { echo "refusing: team README template missing at $TEAM_README_TEMPLATE" >&2; return 1; }
+  # Encoded here, not in phase 2: a missing or unreadable template must refuse before anything is created.
+  README_CONTENT=$(base64 < "$TEAM_README_TEMPLATE" 2>/dev/null | tr -d '\n')
+  [ -n "$README_CONTENT" ] || { echo "refusing: team README template missing or unreadable at $TEAM_README_TEMPLATE" >&2; return 1; }
   team_repo_check || return 1
 
   verify_repo_identity "$MIRROR_REPO"; local mirror_rc=$?
@@ -253,7 +252,7 @@ phase2_mutate(){
   return 0
 }
 
-NEED_CREATE_REPO=0; NEED_README=0; NEED_MIRROR_KEY=0; NEED_TEAM_KEY=0
+NEED_CREATE_REPO=0; NEED_README=0; NEED_MIRROR_KEY=0; NEED_TEAM_KEY=0; README_CONTENT=""
 
 phase1_checks || exit 1
 [ "$DRY_RUN" -eq 1 ] && exit 0
