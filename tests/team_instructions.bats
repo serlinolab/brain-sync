@@ -11,6 +11,7 @@ setup() {
 teardown() { brain_test_teardown; }
 
 @test "instruction files a colleague pushed never check out, ordinary files do, and a colleague's serlinolab/ never collides with the mirror" {
+  make_fake_mirror   # a real, independently-cloned mirror sits at $TEAM/serlinolab already
   local other; other="$(mktemp -d)"
   git clone -q "$BRAIN_ROOT/origin-team.git" "$other"
   mkdir -p "$other/.claude/skills/x" "$other/.claude/rules" "$other/notes/.claude/skills/y" "$other/serlinolab"
@@ -39,6 +40,7 @@ teardown() { brain_test_teardown; }
   # the colleague's serlinolab/x.md never checks out and never lands where the real,
   # independently-cloned mirror lives
   [ ! -e "$TEAM/serlinolab/x.md" ]
+  [ "$(cat "$MIRROR/sub/file.txt")" = hello ]   # the real mirror's own content is untouched
 }
 
 @test "a locally-created instruction file is quarantined before it is ever staged, and never deleted" {
