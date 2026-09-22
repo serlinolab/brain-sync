@@ -264,3 +264,15 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   [ "$status" -ne 0 ] || false
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
 }
+
+@test "refuses when the team README template is missing, and creates nothing" {
+  # A copy of provision.sh with no templates/ beside it: base64 of a missing file used to yield
+  # an empty README that was committed while provisioning still reported success.
+  local bare; bare="$(mktemp -d)"
+  cp "$REPO_ROOT/provision.sh" "$bare/provision.sh"
+  run bash "$bare/provision.sh" "$LINE"
+  rm -rf "$bare"
+  [ "$status" -ne 0 ]
+  if repo_exists "$BRAIN_ORG/brain-team"; then false; fi
+  [ ! -s "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ]
+}

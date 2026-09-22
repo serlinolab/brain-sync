@@ -39,7 +39,10 @@ teardown() { brain_test_teardown; }
 
 @test "a failed mirror fetch leaves the mirror protected" {
   git -C "$MIRROR" remote set-url origin "$BRAIN_ROOT/missing-origin.git"
-  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git" run bash "$REPO_ROOT/sync.sh"
+  # EXPECTED matches the new origin, so the cycle passes the origin check and genuinely fails at fetch.
+  EXPECTED_MIRROR_REMOTE="$BRAIN_ROOT/missing-origin.git" ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git" \
+    run bash "$REPO_ROOT/sync.sh"
+  grep -q "mirror fetch failed" "$BRAIN_ROOT/.state/sync.log"
   run bash -c "echo hi > '$MIRROR/after-failed-fetch.txt'" 2>/dev/null
   [ "$status" -ne 0 ]
 }
