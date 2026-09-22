@@ -14,7 +14,6 @@ source "$DIR/lib/sync.sh"
 if [ "${BRAIN_SYNC_LOCK_HELD:-0}" != 1 ]; then acquire_lock || exit 0; fi
 [ -n "${SYNC_HOLD_SECONDS:-}" ] && sleep "$SYNC_HOLD_SECONDS"
 person_warn
-quarantine_instructions
 commit_local
 commit_rc=$?
 if [ "$commit_rc" -eq 1 ]; then
@@ -31,10 +30,6 @@ fi
 sync_mirror
 cycle_rc=$?
 sync_team || cycle_rc=$?
-# Class A #2: sweep again after the incoming update - success, conflict-abort, or failure
-# alike - since a rebase can occasionally materialise a path the sparse-checkout would
-# otherwise have refused to check out.
-quarantine_instructions
 what_changed
 update_attention_marker
 exit "$cycle_rc"

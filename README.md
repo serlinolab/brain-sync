@@ -18,7 +18,7 @@ Running the line again on a Mac that's already set up does nothing, and tells yo
 
 A folder called `Serlino` in your home folder, with:
 
-- **team/serlinolab/** — the Serlino brain, kept current on its own. Open the
+- **serlinolab/** — the Serlino brain, kept current on its own. Open the
   Code tab here to work — this is where its rules apply.
 - **team/** — notes shared with the whole team. Save something here and
   everyone else sees it within a few minutes. What they save, you see too.

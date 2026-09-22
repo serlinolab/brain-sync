@@ -11,19 +11,20 @@ TEAM_KEY="$HOME/.ssh/brain_team_ed25519"
 SSH_CONFIG="$HOME/.ssh/config"
 
 # AC-8: refuse BEFORE any mutation when $ROOT exists but was not built by this setup - the
-# MAX-1514 layout (had .state/setup-complete, never wrote .state/layout) and any hand-made
-# folder both fail this the same way. A read (`cat`) never mutates, so this check is safe to
-# run before mkdir touches anything.
+# MAX-1514 layout (had .state/setup-complete, never wrote .state/layout), the earlier
+# parker-v1 nested layout (nobody has installed it, so no migration is needed - it is refused
+# the same as any other stranger), and any hand-made folder all fail this the same way. A read
+# (`cat`) never mutates, so this check is safe to run before mkdir touches anything.
 if [ -e "$ROOT" ]; then
   existing_layout=$(cat "$LAYOUT_MARK" 2>/dev/null || true)
-  if [ "$existing_layout" != "parker-v1" ]; then
+  if [ "$existing_layout" != "parker-v2" ]; then
     echo "A Serlino folder already exists on this Mac and was not made by this setup. Nothing was changed. Please tell Max." >&2
     exit 1
   fi
 fi
 
 mkdir -p "$STATE" "$HOME/.ssh"
-printf 'parker-v1\n' > "$LAYOUT_MARK"
+printf 'parker-v2\n' > "$LAYOUT_MARK"
 
 PERSON="${BRAIN_PERSON:-}"
 if [ -z "$PERSON" ]; then
@@ -166,14 +167,15 @@ if [ "$team_ready" -eq 1 ]; then
 
   echo "Cloning the company mirror..."
   expected_mirror='git@brain-mirror:serlinolab/Serlinolab-Brain.git'
-  if [ -e "$TEAM/serlinolab" ]; then
-    actual=$(git -C "$TEAM/serlinolab" remote get-url origin 2>/dev/null || echo '<missing origin>')
-    if ! remote_matches "$TEAM/serlinolab" "$expected_mirror"; then
-      echo "Refusing to adopt $TEAM/serlinolab: origin is $actual, expected $expected_mirror (including push URLs)." >&2
+  MIRROR="$ROOT/serlinolab"
+  if [ -e "$MIRROR" ]; then
+    actual=$(git -C "$MIRROR" remote get-url origin 2>/dev/null || echo '<missing origin>')
+    if ! remote_matches "$MIRROR" "$expected_mirror"; then
+      echo "Refusing to adopt $MIRROR: origin is $actual, expected $expected_mirror (including push URLs)." >&2
       setup_ok=0
     fi
   else
-    git clone --quiet "$expected_mirror" "$TEAM/serlinolab" || { echo "Mirror clone pending - it will complete once Max has registered your key." >&2; setup_ok=0; }
+    git clone --quiet "$expected_mirror" "$MIRROR" || { echo "Mirror clone pending - it will complete once Max has registered your key." >&2; setup_ok=0; }
   fi
 fi
 

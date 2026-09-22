@@ -50,6 +50,6 @@ being signed in, which it is not in the environment these tests run in
 (`tests/live_claude.bats` documents and skips this by default; set `BRAIN_LIVE_CLAUDE=1` to
 run it on a Mac that is signed in).
 
-To check by hand: open the Code tab on `~/Serlino/team/serlinolab` on a set-up Mac and ask the
+To check by hand: open the Code tab on `~/Serlino/serlinolab` on a set-up Mac and ask the
 assistant to name the brand. It should answer using whatever is in
-`~/Serlino/team/serlinolab/CLAUDE.md`, without being told where to look.
+`~/Serlino/serlinolab/CLAUDE.md`, without being told where to look.

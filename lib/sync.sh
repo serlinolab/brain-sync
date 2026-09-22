@@ -10,8 +10,8 @@ protect_readonly(){
 }
 
 # AC-8/AC-4: no git vocabulary in here. Regenerated every cycle since `git clean` would
-# otherwise delete it (untracked). MAX-1515: "your personal folder next door" is gone - the
-# mirror now lives nested inside team/, one level up from the mirror itself, not beside it.
+# otherwise delete it (untracked). MAX-1515 (amended): the mirror lives beside team/, not
+# nested inside it.
 company_readme(){
   cat > "$MIRROR/READ ME FIRST.txt" <<'TXT'
 This folder is the company's shared knowledge. It updates on its own -
@@ -20,30 +20,9 @@ you don't need to do anything to keep it current.
 You cannot add, change, or remove anything in here. That is on purpose,
 so everyone always sees the same version.
 
-Have something to add or correct? Save it in the team folder, one level
-up, or tell Max directly.
+Have something to add or correct? Save it in the team folder, next
+door, or tell Max directly.
 TXT
-}
-
-# AC-4 (second layer): claudeMdExcludes names the team ROOT's instruction files only - never
-# a glob like team/**/CLAUDE.md, which would also exclude the brand's own CLAUDE.md right
-# here. Regenerated every cycle for the same reason as company_readme (git clean removes it),
-# except when the mirror itself already tracks this path - then we never overwrite it.
-mirror_settings_local(){
-  if git -C "$MIRROR" ls-files --error-unmatch .claude/settings.local.json >/dev/null 2>&1; then
-    log "mirror tracks .claude/settings.local.json; not overwriting"
-    return 0
-  fi
-  mkdir -p "$MIRROR/.claude"
-  cat > "$MIRROR/.claude/settings.local.json" <<JSON
-{
-  "claudeMdExcludes": [
-    "$TEAM/CLAUDE.md",
-    "$TEAM/CLAUDE.local.md",
-    "$TEAM/AGENTS.md"
-  ]
-}
-JSON
 }
 
 sync_mirror(){
@@ -58,75 +37,9 @@ sync_mirror(){
   git -C "$MIRROR" reset --hard --quiet origin/main || rc=1
   [ "$rc" -eq 0 ] && git -C "$MIRROR" clean -ffdq || rc=1
   [ "$rc" -eq 0 ] && company_readme || rc=1
-  [ "$rc" -eq 0 ] && mirror_settings_local || rc=1
   protect_readonly "$MIRROR"
   [ "$rc" -eq 0 ] && log "mirror at $(git -C "$MIRROR" rev-parse --short HEAD)"
   return "$rc"
-}
-
-# Class A #3: team/serlinolab must always be the real mirror clone - never a file, a symlink,
-# or a directory that isn't backed by its own .git. Anything else has no legitimate reason to
-# be there (a colleague's push can't put it there either - non-cone sparse-checkout refuses
-# to check `serlinolab` out at team root, see write_team_sparse_checkout). Quarantined, never
-# deleted; sync_mirror finding no .git there re-clones on the next cycle.
-guard_mirror_slot(){
-  [ -e "$MIRROR" ] || return 0
-  if [ -L "$MIRROR" ] || [ ! -d "$MIRROR" ] || ! git -C "$MIRROR" rev-parse --git-dir >/dev/null 2>&1; then
-    local ts dest; ts=$(date -u +%FT%TZ); dest="$QUARANTINE/$ts/serlinolab"
-    mkdir -p "$(dirname "$dest")"
-    mv "$MIRROR" "$dest"
-    log "quarantined invalid mirror slot at serlinolab (not a real clone) - it will be re-cloned"
-  fi
-}
-
-# AC-4 / Class A: move any locally-created CLAUDE.md / CLAUDE.local.md / AGENTS.md / .claude
-# anywhere under team/ - excluding team/serlinolab, which is the brand's own and stays - into
-# quarantine. Never deleted. Matched case-insensitively (APFS is case-insensitive: claude.md,
-# Agents.MD reach the same place a differently-cased name would), and -iname's default
-# no-follow behaviour means a symlink named one of these is quarantined as a link, never
-# dereferenced. Also quarantines any OTHER symlink under team/ (outside the mirror) whose
-# target resolves into the mirror or anywhere outside team/ - a colleague has no legitimate
-# reason to commit such a link, and one materialising here could only be locally created (the
-# sparse-checkout keeps a colleague's own symlink from ever checking out in the first place).
-#
-# Called BEFORE staging (so before anything else in the cycle) AND again after sync_team, on
-# every path - success, conflict-abort, and failure alike - because a rebase can occasionally
-# materialise a path the sparse-checkout would otherwise have refused to check out.
-quarantine_instructions(){
-  [ -d "$TEAM" ] || return 0
-  guard_mirror_slot
-  local ts; ts=$(date -u +%FT%TZ)
-  local f rel dest target realtarget
-  while IFS= read -r -d '' f; do
-    rel="${f#"$TEAM"/}"
-    dest="$QUARANTINE/$ts/$rel"
-    mkdir -p "$(dirname "$dest")"
-    mv "$f" "$dest"
-    log "quarantined instruction file: $rel"
-  done < <(find "$TEAM" \
-             \( -path "$TEAM/.git" -o -path "$MIRROR" \) -prune -o \
-             \( -iname 'CLAUDE.md' -o -iname 'CLAUDE.local.md' -o -iname 'AGENTS.md' -o -iname '.claude' \) -print0 \
-             2>/dev/null)
-  while IFS= read -r -d '' f; do
-    rel="${f#"$TEAM"/}"
-    target=$(readlink "$f" 2>/dev/null) || continue
-    realtarget=$(cd "$(dirname "$f")" 2>/dev/null && realpath -q -- "$target" 2>/dev/null)
-    # Legitimate iff the symlink resolves to somewhere under team/ that is NOT the mirror.
-    # Anything else - resolves into the mirror, resolves outside team/ entirely, or could not
-    # be resolved at all (dangling) - gets quarantined.
-    case "$realtarget" in
-      "$MIRROR"|"$MIRROR"/*) ;;
-      "$TEAM"/*) continue ;;
-      *) ;;
-    esac
-    dest="$QUARANTINE/$ts/$rel"
-    mkdir -p "$(dirname "$dest")"
-    mv "$f" "$dest"
-    log "quarantined escaping symlink: $rel -> $target"
-  done < <(find "$TEAM" \
-             \( -path "$TEAM/.git" -o -path "$MIRROR" \) -prune -o \
-             -type l -print0 2>/dev/null)
-  return 0
 }
 
 # AC-3/AC-7: a restore point exists before any network call; rejects an oversized file, and a
@@ -140,7 +53,7 @@ commit_local(){
   while IFS= read -r -d '' big; do
     log "REJECT oversized: ${big#./}"
     git reset -q -- "$big" || rc=1
-  done < <(find . \( -path ./.git -o -path ./serlinolab \) -prune -o -type f -size +10240k -print0 2>/dev/null)
+  done < <(find . -path ./.git -prune -o -type f -size +10240k -print0 2>/dev/null)
   [ "$rc" -eq 0 ] || return 1
   rm -f "$STATE/secret_rejects"
   while IFS= read -r -d '' secret; do
@@ -149,7 +62,7 @@ commit_local(){
       git reset -q -- "$secret" || rc=1
       printf '%s\n' "$secret" >> "$STATE/secret_rejects"
     fi
-  done < <(git diff --cached --name-only -z -- . ':!serlinolab')
+  done < <(git diff --cached --name-only -z)
   [ "$rc" -eq 0 ] || return 1
   if ! git diff --cached --quiet; then
     GIT_AUTHOR_NAME="$GIT_IDENTITY_NAME" GIT_AUTHOR_EMAIL="$GIT_IDENTITY_EMAIL" \
@@ -229,7 +142,7 @@ sync_team(){
 update_attention_marker(){
   local big age_h secret_first
   if [ -d "$TEAM/.git" ]; then
-    big=$(find "$TEAM" \( -path "$TEAM/.git" -o -path "$MIRROR" \) -prune -o -type f -size +10240k -print 2>/dev/null | head -1)
+    big=$(find "$TEAM" -path "$TEAM/.git" -prune -o -type f -size +10240k -print 2>/dev/null | head -1)
     if [ -n "$big" ]; then
       printf 'A file is too big to share and was left out:\n  %s\n' "${big#"$TEAM"/}" > "$MARK"
       return

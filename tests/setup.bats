@@ -56,13 +56,13 @@ teardown() {
 }
 
 @test "setup refuses an unrelated existing team repository" {
-  # Must build a valid parker-v1 layout first, or setup's earlier AC-8 "not made by this
+  # Must build a valid parker-v2 layout first, or setup's earlier AC-8 "not made by this
   # setup" guard fires and this test never reaches the remote-mismatch refusal it means to
   # exercise - it used to pass for the wrong reason (a bats-on-macOS-bash-3.2 gotcha:
   # intermediate `[[ ]]` failures inside a @test do not fail the test, only `[ ]`/external
   # commands do - see the note on the final `run git -C ... remote get-url` assertion below).
   mkdir -p "$HOME/Serlino/.state"
-  printf 'parker-v1\n' > "$HOME/Serlino/.state/layout"
+  printf 'parker-v2\n' > "$HOME/Serlino/.state/layout"
   git init -q "$HOME/Serlino/team"
   git -C "$HOME/Serlino/team" remote add origin https://unrelated.example/team.git
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
@@ -72,19 +72,19 @@ teardown() {
   # tripped on before this fix). grep -qF is an external command and fails the test properly.
   printf '%s' "$output" | grep -qF "$HOME/Serlino/team"
   printf '%s' "$output" | grep -qF "unrelated.example/team.git"
-  [ ! -e "$HOME/Serlino/team/serlinolab" ]
+  [ ! -e "$HOME/Serlino/serlinolab" ]
 }
 
-@test "setup refuses an unrelated mirror nested inside an otherwise valid team clone" {
+@test "setup refuses an unrelated mirror beside an otherwise valid team clone" {
   mkdir -p "$HOME/Serlino/.state"
-  printf 'parker-v1\n' > "$HOME/Serlino/.state/layout"
+  printf 'parker-v2\n' > "$HOME/Serlino/.state/layout"
   git init -q "$HOME/Serlino/team"
   "$REAL_GIT" -C "$HOME/Serlino/team" remote add origin 'git@brain-team:serlinolab/brain-team.git'
-  git init -q "$HOME/Serlino/team/serlinolab"
-  git -C "$HOME/Serlino/team/serlinolab" remote add origin https://unrelated.example/mirror.git
+  git init -q "$HOME/Serlino/serlinolab"
+  git -C "$HOME/Serlino/serlinolab" remote add origin https://unrelated.example/mirror.git
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"$HOME/Serlino/team/serlinolab"*"unrelated.example/mirror.git"* ]] || false
+  [[ "$output" == *"$HOME/Serlino/serlinolab"*"unrelated.example/mirror.git"* ]] || false
 }
 
 @test "setup records person once and refuses a later different person" {
@@ -98,7 +98,7 @@ teardown() {
 
 @test "person mismatch stops before cloning a missing team checkout" {
   mkdir -p "$HOME/Serlino/.state"
-  printf 'parker-v1\n' > "$HOME/Serlino/.state/layout"
+  printf 'parker-v2\n' > "$HOME/Serlino/.state/layout"
   printf '%s\n' alice > "$HOME/Serlino/.state/person"
   BRAIN_PERSON=bob run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
@@ -108,7 +108,7 @@ teardown() {
 
 @test "setup refuses a correct fetch URL with a foreign push URL" {
   mkdir -p "$HOME/Serlino/.state"
-  printf 'parker-v1\n' > "$HOME/Serlino/.state/layout"
+  printf 'parker-v2\n' > "$HOME/Serlino/.state/layout"
   git init -q "$HOME/Serlino/team"
   "$REAL_GIT" -C "$HOME/Serlino/team" remote add origin 'git@brain-team:serlinolab/brain-team.git'
   git -C "$HOME/Serlino/team" remote set-url --add --push origin ssh://attacker.invalid/leak.git
@@ -117,18 +117,16 @@ teardown() {
   [[ "$output" == *"including push URLs"* ]] || false
 }
 
-@test "setup does not adopt team/serlinolab through team's own repository" {
-  # remote_matches requires a .git AT the exact path, not one discovered by walking up to an
-  # ancestor - otherwise `git -C team/serlinolab remote get-url origin` would silently answer
-  # with team's own (correct) remote for a directory that isn't a clone of the mirror at all.
-  mkdir -p "$HOME/Serlino/.state"
+# AC-8 (amended): the earlier parker-v1 nested layout (team/serlinolab) is refused exactly
+# like any other stranger folder - nobody has installed it, so there is no migration path,
+# only refusal.
+@test "setup refuses a ~/Serlino whose marker is the earlier parker-v1 layout" {
+  mkdir -p "$HOME/Serlino/.state" "$HOME/Serlino/team/serlinolab"
   printf 'parker-v1\n' > "$HOME/Serlino/.state/layout"
-  git init -q "$HOME/Serlino/team"
-  "$REAL_GIT" -C "$HOME/Serlino/team" remote add origin 'git@brain-team:serlinolab/brain-team.git'
-  mkdir -p "$HOME/Serlino/team/serlinolab"
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"$HOME/Serlino/team/serlinolab"*"including push URLs"* ]] || false
+  [[ "$output" == *"was not made by this setup"* ]] || false
+  [ ! -e "$HOME/Serlino/serlinolab" ]
 }
 
 @test "malformed private keys do not leave an empty public key" {
@@ -145,11 +143,11 @@ teardown() {
   [ ! -e "$HOME/Serlino/.state/setup-complete" ]
 }
 
-@test "a successful setup lays out team/serlinolab nested, personal folders, and the signpost" {
+@test "a successful setup lays out serlinolab beside team, personal folders, and the signpost" {
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -eq 0 ]
   [ -d "$HOME/Serlino/team/.git" ]
-  [ -d "$HOME/Serlino/team/serlinolab/.git" ]
+  [ -d "$HOME/Serlino/serlinolab/.git" ]
   [ -d "$HOME/Serlino/personal/brands" ]
   [ -d "$HOME/Serlino/personal/ideas" ]
   [ -d "$HOME/Serlino/personal/finds" ]
@@ -157,7 +155,7 @@ teardown() {
   [ -f "$HOME/Serlino/CLAUDE.md" ]
   [ -L "$HOME/Serlino/AGENTS.md" ]
   [ "$(readlink "$HOME/Serlino/AGENTS.md")" = CLAUDE.md ]
-  [ "$(cat "$HOME/Serlino/.state/layout")" = parker-v1 ]
+  [ "$(cat "$HOME/Serlino/.state/layout")" = parker-v2 ]
   [ -x "$HOME/Serlino/team/.git/hooks/pre-commit" ]
   [ -x "$HOME/Serlino/team/.git/hooks/pre-push" ]
   [[ "$output" == *"SERLINO-BRAIN-SETUP person=alice machine="*"mirror_key=ssh-ed25519"*"team_key=ssh-ed25519"* ]] || false
@@ -192,7 +190,7 @@ teardown() {
   [ ! -d "$HOME/Serlino/.state" ]
 }
 
-@test "re-running setup on its own parker-v1 layout still works" {
+@test "re-running setup on its own parker-v2 layout still works" {
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -eq 0 ]
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"

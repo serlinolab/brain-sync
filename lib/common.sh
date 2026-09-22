@@ -5,7 +5,7 @@
 ROOT="${BRAIN_ROOT:-$HOME/Serlino}"
 STATE="$ROOT/.state"
 TEAM="$ROOT/team"                 # MAX-1515: two-way, everyone writes
-MIRROR="$TEAM/serlinolab"         # MAX-1515: nested inside team/, read-only
+MIRROR="$ROOT/serlinolab"         # MAX-1515 (amended): beside team/, not nested inside it, read-only
 PERSONAL="$ROOT/personal"         # MAX-1515: plain folders, no git, engine never touches this
 LOG="$STATE/sync.log"
 MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
