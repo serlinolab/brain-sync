@@ -7,6 +7,14 @@
 #   FAKE_GH_FAIL_KEYS_LOOKUP=1        - `api repos/*/*/keys` GET exits 1 (transient API failure)
 #   FAKE_GH_PAGE_SIZE=<n>             - caps a keys listing to <n> rows unless --paginate is passed
 #                                        (default 30, GitHub's real default page size)
+#   FAKE_GH_REPO_VIEW_5XX=1           - `api repos/ORG/REPO` GET exits 1 with "HTTP 500" on
+#                                        stderr (a real transient failure), never "HTTP 404"
+#   FAKE_GH_README_5XX=1              - `api repos/ORG/REPO/contents/README.md` GET, same
+#
+# A repo's privacy is its marker file's content: "true" (private, what `repo create
+# --private` writes) or "false" (public). `api repos/ORG/REPO` echoes `{"private": <that>}`
+# and understands `--jq .private`, so a test can seed a public repo by writing "false" into
+# the marker file before running provision.sh.
 set -u
 STATE="${FAKE_GH_STATE:?FAKE_GH_STATE must be set}"
 PAGE_SIZE="${FAKE_GH_PAGE_SIZE:-30}"
@@ -20,7 +28,7 @@ case "$cmd" in
     case "$sub" in
       create)
         orgrepo="$1"
-        touch "$STATE/repos/${orgrepo//\//__}"
+        printf 'true\n' > "$STATE/repos/${orgrepo//\//__}"
         exit 0
         ;;
       *) exit 1 ;;
@@ -86,7 +94,13 @@ case "$cmd" in
         org=$(echo "$path" | cut -d/ -f2); repo=$(echo "$path" | cut -d/ -f3)
         readmefile="$STATE/repos/${org}__${repo}.readme"
         if [ "$method" = GET ]; then
-          [ -e "$readmefile" ] && exit 0 || exit 1
+          if [ "${FAKE_GH_README_5XX:-0}" = 1 ]; then
+            echo "gh: Internal Server Error (HTTP 500)" >&2
+            exit 1
+          fi
+          if [ -e "$readmefile" ]; then exit 0; fi
+          echo "gh: Not Found (HTTP 404)" >&2
+          exit 1
         else
           touch "$readmefile"
           exit 0
@@ -94,7 +108,22 @@ case "$cmd" in
         ;;
       repos/*/*)
         org=$(echo "$path" | cut -d/ -f2); repo=$(echo "$path" | cut -d/ -f3)
-        [ -e "$STATE/repos/${org}__${repo}" ] && exit 0 || exit 1
+        if [ "${FAKE_GH_REPO_VIEW_5XX:-0}" = 1 ]; then
+          echo "gh: Internal Server Error (HTTP 500)" >&2
+          exit 1
+        fi
+        repofile="$STATE/repos/${org}__${repo}"
+        if [ ! -e "$repofile" ]; then
+          echo "gh: Not Found (HTTP 404)" >&2
+          exit 1
+        fi
+        private=$(cat "$repofile" 2>/dev/null || echo true)
+        if [ "$jqexpr" = ".private" ]; then
+          echo "$private"
+        else
+          printf '{"private": %s}\n' "$private"
+        fi
+        exit 0
         ;;
       *) exit 1 ;;
     esac

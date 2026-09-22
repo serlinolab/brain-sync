@@ -86,6 +86,29 @@ register_key(){
   "$GH" api "repos/$BRAIN_ORG/$repo/keys" -f title="$title" -f key="$key" -F "read_only=$want_ro" >/dev/null
 }
 
+# AC-1a: only a DEFINITE 404 means "absent" - any other lookup failure (network, 5xx, auth)
+# is refused rather than treated as "safe to create". `gh` reports every HTTP error on
+# stderr with the status code in it ("... (HTTP <code>)"), so that's the one signal trusted
+# to distinguish "doesn't exist" from "couldn't find out". $2 (optional) is a --jq expression;
+# its output is echoed on success. Exit code: 0 exists (stdout carries --jq's output), 1
+# confirmed absent (404), 2 unknown/error (stderr carries gh's message).
+gh_lookup(){
+  local path="$1" jq_expr="${2:-}" out err rc errfile
+  errfile=$(mktemp) || return 2
+  if [ -n "$jq_expr" ]; then
+    out=$("$GH" api "$path" --jq "$jq_expr" 2>"$errfile")
+  else
+    out=$("$GH" api "$path" 2>"$errfile")
+  fi
+  rc=$?
+  err=$(cat "$errfile" 2>/dev/null); rm -f "$errfile"
+  if [ "$rc" -eq 0 ]; then printf '%s' "$out"; return 0; fi
+  case "$err" in
+    *'HTTP 404'*) return 1 ;;
+    *) [ -n "$err" ] && echo "$err" >&2; return 2 ;;
+  esac
+}
+
 # AC-1: the team repo is created once, private, with an initial commit on main (so
 # origin/main exists for the first clone) containing a README that says in plain words the
 # folder is shared with the team.
@@ -94,17 +117,39 @@ register_key(){
 # the initial commit landed, the repo exists but has no main branch - re-running used to
 # report success on that empty repo forever. Presence of README.md on main is now checked
 # separately from repo existence, and the initial commit is retried whenever it's missing.
+#
+# Class C fixes: (1) a lookup failure that isn't a definite 404 refuses instead of silently
+# creating a duplicate or skipping the README check. (2) an existing repo that is NOT private
+# is refused outright - this script never makes a repo public, and never proceeds against one
+# that already is.
 ensure_team_repo(){
-  if "$GH" api "repos/$BRAIN_ORG/$TEAM_REPO" >/dev/null 2>&1; then
-    echo "repo $BRAIN_ORG/$TEAM_REPO already exists"
-  else
-    echo "creating private repo $BRAIN_ORG/$TEAM_REPO"
-    [ "$DRY_RUN" -eq 1 ] && return 0
-    "$GH" repo create "$BRAIN_ORG/$TEAM_REPO" --private --description "Serlino Brain - team folder" || return 1
-  fi
-  if "$GH" api "repos/$BRAIN_ORG/$TEAM_REPO/contents/README.md" >/dev/null 2>&1; then
-    return 0
-  fi
+  local private rc
+  private=$(gh_lookup "repos/$BRAIN_ORG/$TEAM_REPO" '.private'); rc=$?
+  case "$rc" in
+    0)
+      echo "repo $BRAIN_ORG/$TEAM_REPO already exists"
+      [ "$private" = true ] || refuse "repo $BRAIN_ORG/$TEAM_REPO already exists and is not private - refusing to touch it"
+      ;;
+    1)
+      echo "creating private repo $BRAIN_ORG/$TEAM_REPO"
+      [ "$DRY_RUN" -eq 1 ] && return 0
+      "$GH" repo create "$BRAIN_ORG/$TEAM_REPO" --private --description "Serlino Brain - team folder" || return 1
+      ;;
+    *)
+      echo "refusing: could not look up repo $BRAIN_ORG/$TEAM_REPO (the gh lookup failed - treated as unknown, never as absent)" >&2
+      return 1
+      ;;
+  esac
+
+  gh_lookup "repos/$BRAIN_ORG/$TEAM_REPO/contents/README.md" >/dev/null; rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) : ;;   # confirmed absent - fall through and create the initial commit
+    *)
+      echo "refusing: could not look up README.md on $BRAIN_ORG/$TEAM_REPO (the gh lookup failed - treated as unknown, never as absent)" >&2
+      return 1
+      ;;
+  esac
   echo "repo $BRAIN_ORG/$TEAM_REPO has no initial commit yet - creating it"
   [ "$DRY_RUN" -eq 1 ] && return 0
   local content

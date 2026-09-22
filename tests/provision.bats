@@ -120,9 +120,9 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
 }
 
 @test "retries the initial commit when the team repo exists but was left empty by an interrupted run" {
-  # Simulate: `gh repo create` succeeded, but the process died before the README PUT.
+  # Simulate: `gh repo create --private` succeeded, but the process died before the README PUT.
   mkdir -p "$FAKE_GH_STATE/repos"
-  touch "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team"
+  printf 'true\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team"
   run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -eq 0 ]
   [[ "$output" == *"has no initial commit yet"* ]] || false
@@ -133,5 +133,37 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   run bash "$REPO_ROOT/provision.sh" --dry-run "$LINE"
   [ "$status" -eq 0 ]
   ! repo_exists "$BRAIN_ORG/brain-team"
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
+}
+
+@test "runs directly as ./provision.sh (executable in git, not just via bash)" {
+  cd "$REPO_ROOT" && run ./provision.sh --dry-run "$LINE"
+  [ "$status" -eq 0 ]
+}
+
+# AC-1a: only a DEFINITE 404 means "absent". Any other failure (5xx, network, auth) refuses
+# and changes nothing - never treated as "safe to create".
+@test "refuses when the repo-view lookup fails with a 5xx, and creates nothing" {
+  FAKE_GH_REPO_VIEW_5XX=1 run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
+  ! repo_exists "$BRAIN_ORG/brain-team"
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
+}
+
+@test "refuses when the README lookup fails with a 5xx, and writes no initial commit" {
+  mkdir -p "$FAKE_GH_STATE/repos"
+  printf 'true\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team"   # repo already exists
+  FAKE_GH_README_5XX=1 run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.readme" ]
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
+}
+
+@test "refuses an existing team repo that is not private, and registers no keys" {
+  mkdir -p "$FAKE_GH_STATE/repos"
+  printf 'false\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team"   # exists, but public
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not private"* ]] || false
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
 }
