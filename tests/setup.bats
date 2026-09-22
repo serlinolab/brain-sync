@@ -161,6 +161,38 @@ teardown() {
   [[ "$output" == *"SERLINO-BRAIN-SETUP person=alice machine="*"mirror_key=ssh-ed25519"*"team_key=ssh-ed25519"* ]] || false
 }
 
+# Review fix 1: a creator's global git config can set a relative core.hooksPath (e.g.
+# .githooks). Unpinned, that makes git skip our installed .git/hooks entirely and run
+# whatever a colleague committed into team/.githooks/ instead - here, a hook that writes a
+# marker file. The repo-local hooksPath setup.sh installs must always win over the global one.
+@test "a permissive global core.hooksPath cannot make git skip our installed team hooks" {
+  local teamwork; teamwork="$(mktemp -d)"
+  "$REAL_GIT" clone -q "$BRAIN_ROOT/repos/team.git" "$teamwork"
+  mkdir -p "$teamwork/.githooks"
+  printf '#!/bin/bash\necho ran > "%s/hook_marker"\nexit 0\n' "$BRAIN_ROOT" > "$teamwork/.githooks/pre-commit"
+  chmod +x "$teamwork/.githooks/pre-commit"
+  git -C "$teamwork" add -A
+  git -C "$teamwork" -c user.name=fixture -c user.email=fixture@example.com commit -qm "colleague adds .githooks"
+  git -C "$teamwork" push -q origin main
+  rm -rf "$teamwork"
+
+  local global_conf="$BRAIN_ROOT/global-gitconfig"
+  printf '[core]\n  hooksPath = .githooks\n' > "$global_conf"
+
+  GIT_CONFIG_GLOBAL="$global_conf" BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -eq 0 ]
+
+  echo "a note" >> "$HOME/Serlino/team/note.txt"
+  GIT_CONFIG_GLOBAL="$global_conf" BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+  [ ! -e "$BRAIN_ROOT/hook_marker" ]
+
+  printf 'ghp_%s\n' "$(printf 'a%.0s' $(seq 1 36))" > "$HOME/Serlino/team/secret.txt"
+  GIT_CONFIG_GLOBAL="$global_conf" BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+  grep -q "REJECT secret: secret.txt" "$HOME/Serlino/.state/sync.log"
+}
+
 @test "setup never overwrites an existing personal README" {
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -eq 0 ]

@@ -138,7 +138,13 @@ if [ -e "$ROOT/team" ]; then
     setup_ok=0
   fi
 else
-  if git clone --quiet "$expected_team" "$ROOT/team"; then
+  # core.hooksPath is pinned to an ABSOLUTE path, both at clone time (-c, so it is in force
+  # before anything else runs) and explicitly afterward (belt and suspenders): a creator's
+  # global git config could set a relative core.hooksPath (e.g. .githooks), which - unpinned -
+  # would make git skip .git/hooks entirely and run whatever a colleague committed into
+  # team/.githooks/ instead. The repo-local value always wins over the global one.
+  if git clone --quiet -c core.hooksPath="$ROOT/team/.git/hooks" "$expected_team" "$ROOT/team" \
+     && git -C "$ROOT/team" config core.hooksPath "$ROOT/team/.git/hooks"; then
     team_ready=1   # a fresh clone is trusted without re-checking remote_matches: a test
                     # double that rewrites the URL argument would make a freshly cloned
                     # origin fail a literal-string re-check even though the clone is correct
@@ -151,6 +157,7 @@ fi
 TEAM="$ROOT/team"
 if [ "$team_ready" -eq 1 ]; then
   echo "Configuring the team folder so it can never carry instruction files..."
+  git -C "$TEAM" config core.hooksPath "$TEAM/.git/hooks" || setup_ok=0
   # AC-4 structural layer: a colleague's CLAUDE.md/.claude never checks out here, at any
   # depth, regardless of whether they committed it as a file, a directory or a symlink.
   # Verified (2026-09-22): non-cone patterns without a leading slash match at every depth on
