@@ -88,6 +88,40 @@ teardown() { brain_test_teardown; }
   ! git -C "$BRAIN_ROOT/origin-team.git" ls-tree -r --name-only main | grep -qi 'CLAUDE.local.md\|\.claude/' || false
 }
 
+@test "a colleague pushing an AGENTS.md directory and a nested CLAUDE.md directory never lands them on disk" {
+  # MAX-1515 fix 4: TEAM_INSTRUCTION_NAMES only got the bare-name exclude for names other than
+  # .claude - a DIRECTORY named e.g. AGENTS.md, or one nested a level down, had no matching
+  # /** descendant exclude of its own.
+  local other; other="$(mktemp -d)"
+  git clone -q "$BRAIN_ROOT/origin-team.git" "$other"
+  mkdir -p "$other/AGENTS.md" "$other/sub/CLAUDE.md"
+  echo x > "$other/AGENTS.md/x.txt"
+  echo x > "$other/sub/CLAUDE.md/y.txt"
+  echo x > "$other/note.txt"
+  git -C "$other" add -A; git_commit "$other" 'colleague: instruction directories'
+  git -C "$other" push -q origin main
+  rm -rf "$other"
+
+  run_sync_cycle
+
+  [ ! -e "$TEAM/AGENTS.md" ]
+  [ ! -e "$TEAM/sub/CLAUDE.md" ]
+  [ "$(cat "$TEAM/note.txt")" = x ]
+}
+
+@test "a local AGENTS.md directory and a nested CLAUDE.md directory don't wedge the cycle or reach the remote" {
+  mkdir -p "$TEAM/AGENTS.md" "$TEAM/sub/CLAUDE.md"
+  echo x > "$TEAM/AGENTS.md/x.txt"
+  echo x > "$TEAM/sub/CLAUDE.md/y.txt"
+  echo "my note" > "$TEAM/note.txt"
+
+  run run_sync_cycle
+  [ "$status" -eq 0 ] || false
+
+  git -C "$BRAIN_ROOT/origin-team.git" show main:note.txt >/dev/null
+  ! git -C "$BRAIN_ROOT/origin-team.git" ls-tree -r --name-only main | grep -qi 'AGENTS.md/\|CLAUDE.md/' || false
+}
+
 @test "sparse-checkout check-rules excludes .claude regardless of git's guess at its object type" {
   # This is the exact reproduction from the review: `check-rules --no-cone` treats
   # `!.claude/` (trailing-slash-only) as a directory-only exclusion, so a path git cannot yet

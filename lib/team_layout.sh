@@ -10,17 +10,19 @@
 # views can never drift apart (MAX-1515 fix 1).
 TEAM_INSTRUCTION_NAMES=(CLAUDE.md CLAUDE.local.md AGENTS.md .claude)
 
-# `!.claude/` alone only excludes .claude when git considers it a directory - a colleague can
-# commit `.claude` as a FILE or a SYMLINK and `git sparse-checkout check-rules --no-cone`
-# still includes it. Excluding both the bare name and the trailing-slash form covers every
-# object type regardless of how git classifies it.
+# `!name` alone only excludes a FILE or SYMLINK named `name` - a colleague (or a local, never-
+# pulled file - MAX-1515 fix 4) can instead commit `name` as a DIRECTORY, with its own files
+# underneath. Excluding both the bare name and its `/**` descendants covers every object type
+# regardless of how git classifies it, for every name here, not just .claude.
 write_team_sparse_checkout(){
   local team="$1" name
   git -C "$team" sparse-checkout init --no-cone >/dev/null 2>&1 || return 1
   {
     printf '/*\n'
-    for name in "${TEAM_INSTRUCTION_NAMES[@]}"; do printf '!%s\n' "$name"; done
-    printf '!.claude/\n'
+    for name in "${TEAM_INSTRUCTION_NAMES[@]}"; do
+      printf '!%s\n' "$name"
+      printf '!%s/**\n' "$name"
+    done
   } > "$team/.git/info/sparse-checkout" || return 1
   git -C "$team" sparse-checkout reapply >/dev/null 2>&1 || return 1
 }
@@ -33,10 +35,16 @@ write_team_sparse_checkout(){
 # differently-cased instruction file is still the same file as far as this creator's Mac is
 # concerned. Independent of any .gitignore content - a colleague committing `!.claude` cannot
 # re-open this.
+#
+# MAX-1515 fix 4: every name gets both the bare exclude AND its `/**` descendants, not just
+# .claude - a local directory named e.g. AGENTS.md/ (or one nested a level down) wedged
+# `git add -A` otherwise: the bare pathspec never matched the file INSIDE it, so `git add`
+# tried to stage a path outside the sparse-checkout definition and exited 1, stopping every
+# future cycle before it ever reached the network.
 team_add_exclude_pathspecs(){
   local name
   for name in "${TEAM_INSTRUCTION_NAMES[@]}"; do
     printf ':(exclude,glob,icase)**/%s\n' "$name"
+    printf ':(exclude,glob,icase)**/%s/**\n' "$name"
   done
-  printf ':(exclude,glob,icase)**/.claude/**\n'
 }
