@@ -143,8 +143,15 @@ else
   # global git config could set a relative core.hooksPath (e.g. .githooks), which - unpinned -
   # would make git skip .git/hooks entirely and run whatever a colleague committed into
   # team/.githooks/ instead. The repo-local value always wins over the global one.
-  if git clone --quiet -c core.hooksPath="$ROOT/team/.git/hooks" "$expected_team" "$ROOT/team" \
-     && git -C "$ROOT/team" config core.hooksPath "$ROOT/team/.git/hooks"; then
+  #
+  # core.symlinks=false: a colleague can commit symlinks that point outside team/ (a
+  # credential directory, the mirror, the signpost). Materialized as real symlinks, writing
+  # through them would escape team/; with this set git checks them out as small plain files
+  # holding the target text instead.
+  if git clone --quiet -c core.hooksPath="$ROOT/team/.git/hooks" -c core.symlinks=false \
+       "$expected_team" "$ROOT/team" \
+     && git -C "$ROOT/team" config core.hooksPath "$ROOT/team/.git/hooks" \
+     && git -C "$ROOT/team" config core.symlinks false; then
     team_ready=1   # a fresh clone is trusted without re-checking remote_matches: a test
                     # double that rewrites the URL argument would make a freshly cloned
                     # origin fail a literal-string re-check even though the clone is correct
@@ -158,6 +165,7 @@ TEAM="$ROOT/team"
 if [ "$team_ready" -eq 1 ]; then
   echo "Configuring the team folder so it can never carry instruction files..."
   git -C "$TEAM" config core.hooksPath "$TEAM/.git/hooks" || setup_ok=0
+  git -C "$TEAM" config core.symlinks false || setup_ok=0
   # AC-4 structural layer: a colleague's CLAUDE.md/.claude never checks out here, at any
   # depth, regardless of whether they committed it as a file, a directory or a symlink.
   # Verified (2026-09-22): non-cone patterns without a leading slash match at every depth on

@@ -193,6 +193,36 @@ teardown() {
   grep -q "REJECT secret: secret.txt" "$HOME/Serlino/.state/sync.log"
 }
 
+# Review fix 2: a colleague can commit symlinks that point outside team/ (a credential
+# directory, the read-only mirror, the signpost). Left as real symlinks, writing through them
+# escapes team/. core.symlinks=false on the team clone makes git materialize them as small
+# plain files holding the target text instead.
+@test "a colleague's symlinks materialize as plain files, never real symlinks" {
+  local teamwork; teamwork="$(mktemp -d)"
+  "$REAL_GIT" clone -q "$BRAIN_ROOT/repos/team.git" "$teamwork"
+  ln -s ../../.ssh "$teamwork/keys"
+  ln -s ../serlinolab "$teamwork/brain"
+  ln -s ../CLAUDE.md "$teamwork/note"
+  git -C "$teamwork" add -A
+  git -C "$teamwork" -c user.name=fixture -c user.email=fixture@example.com commit -qm "colleague adds symlinks"
+  git -C "$teamwork" push -q origin main
+  rm -rf "$teamwork"
+
+  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -eq 0 ]
+
+  echo "a note" >> "$HOME/Serlino/team/note2.txt"
+  BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+
+  run find "$HOME/Serlino/team" -type l
+  [ -z "$output" ]
+  [ -f "$HOME/Serlino/team/keys" ]
+  [ "$(cat "$HOME/Serlino/team/keys")" = "../../.ssh" ]
+  [ -f "$HOME/Serlino/team/note" ]
+  [ "$(cat "$HOME/Serlino/team/note")" = "../CLAUDE.md" ]
+}
+
 @test "setup never overwrites an existing personal README" {
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -eq 0 ]
