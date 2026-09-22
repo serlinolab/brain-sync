@@ -71,6 +71,64 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
 }
 
+@test "refuses when the deploy-key lookup itself fails, and registers nothing" {
+  FAKE_GH_FAIL_KEYS_LOOKUP=1 run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"could not look up existing deploy keys"* ]]
+  ! repo_exists "$BRAIN_ORG/brain-team"
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
+}
+
+@test "refuses a read_only mismatch on an already-registered key, and changes nothing" {
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -eq 0 ]
+  # flip the mirror key's stored read_only to false by hand, as if it had been mis-registered
+  sed -i '' 's/\ttrue$/\tfalse/' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" 2>/dev/null \
+    || sed -i 's/\ttrue$/\tfalse/' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys"
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"read_only=false"*"expected read_only=true"* ]]
+  [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
+}
+
+@test "paginates the key listing - a key past the fixture's default page size is still recognized as registered" {
+  # Seed 30 unrelated keys FIRST, so the real mirror key (registered afterwards) lands past
+  # GitHub's real 30-per-page default. Without --paginate the lookup would only see page 1
+  # and, finding no match there, would register a SECOND, duplicate row for the same key.
+  mkdir -p "$FAKE_GH_STATE/repos"
+  local keyfile="$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys"
+  for i in $(seq 1 30); do printf 'filler-%s\tssh-ed25519 AAAAfiller%s\tfalse\n' "$i" "$i" >> "$keyfile"; done
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$keyfile" | tr -d ' ')" = 31 ]
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already registered"* ]]
+  [ "$(wc -l < "$keyfile" | tr -d ' ')" = 31 ]   # not re-registered as a 32nd row
+}
+
+@test "recognizes an already-registered key even when the stored copy has no trailing comment" {
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -eq 0 ]
+  local keyfile="$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys"
+  # strip the trailing comment GitHub does not consider part of the key material
+  sed -i '' 's/ brain-mirror-alices-mac\t/\t/' "$keyfile" 2>/dev/null || sed -i 's/ brain-mirror-alices-mac\t/\t/' "$keyfile"
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already registered"* ]]
+  [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
+}
+
+@test "retries the initial commit when the team repo exists but was left empty by an interrupted run" {
+  # Simulate: `gh repo create` succeeded, but the process died before the README PUT.
+  mkdir -p "$FAKE_GH_STATE/repos"
+  touch "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team"
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"has no initial commit yet"* ]]
+  [ -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.readme" ]
+}
+
 @test "--dry-run prints intent and mutates nothing" {
   run bash "$REPO_ROOT/provision.sh" --dry-run "$LINE"
   [ "$status" -eq 0 ]
