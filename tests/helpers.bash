@@ -9,7 +9,15 @@ brain_test_setup() {
   LOCK="$STATE/run.lock"; LOG="$STATE/sync.log"; CONFLICT_STATE="$STATE/conflict_attempts"
   CONFLICTS="$STATE/conflicts"; QUARANTINE="$STATE/quarantine"
   MAX_CONFLICT_ATTEMPTS=3
+  # MAX-1515 fix 4b: the engine checks TEAM/MIRROR's actual origin against these before every
+  # mutating operation. Tests never use the real git@brain-team/git@brain-mirror aliases -
+  # make_fake_team_repo/make_fake_mirror below always seed $BRAIN_ROOT/origin-{team,mirror}.git
+  # - so that has to be what "expected" means here too, the same way ONLINE_CHECK_REMOTE above
+  # is overridden to a test double's URL rather than the real one.
+  EXPECTED_TEAM_REMOTE="$BRAIN_ROOT/origin-team.git"
+  EXPECTED_MIRROR_REMOTE="$BRAIN_ROOT/origin-mirror.git"
   export ROOT STATE TEAM MIRROR PERSONAL MARK LOCK LOG CONFLICT_STATE CONFLICTS QUARANTINE MAX_CONFLICT_ATTEMPTS
+  export EXPECTED_TEAM_REMOTE EXPECTED_MIRROR_REMOTE
   mkdir -p "$STATE"
   printf 'testperson\n' > "$STATE/person"   # setup.sh writes this on a real Mac
 }

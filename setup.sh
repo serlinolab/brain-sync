@@ -136,8 +136,10 @@ if [ -e "$ROOT/team" ]; then
   if remote_matches "$ROOT/team" "$expected_team"; then
     team_ready=1
   else
+    # MAX-1515 fix 4a: exit immediately - never fall through to the launchd install below
+    # against a folder this run just refused to touch.
     echo "Refusing to adopt $ROOT/team: origin is $actual, expected $expected_team (including push URLs)." >&2
-    setup_ok=0
+    exit 1
   fi
 else
   # --no-checkout: nothing is written to the working tree by the clone itself. core.hooksPath
@@ -197,8 +199,9 @@ if [ "$team_ready" -eq 1 ]; then
     if [ -e "$MIRROR" ]; then
       actual=$(git -C "$MIRROR" remote get-url origin 2>/dev/null || echo '<missing origin>')
       if ! remote_matches "$MIRROR" "$expected_mirror"; then
+        # MAX-1515 fix 4a: same immediate exit as the team-folder refusal above.
         echo "Refusing to adopt $MIRROR: origin is $actual, expected $expected_mirror (including push URLs)." >&2
-        setup_ok=0
+        exit 1
       fi
     else
       git clone --quiet "$expected_mirror" "$MIRROR" || { echo "Mirror clone pending - it will complete once Max has registered your key." >&2; setup_ok=0; }

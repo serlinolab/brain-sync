@@ -32,18 +32,28 @@ setup_setup_test() {
   # Mac, where the alias is literal and only resolves to a path at connect time). Without
   # the return trip, a freshly cloned repo's origin would read back as the test's bare path
   # and every later remote_matches() re-check would see a false mismatch.
-  printf '%s\n' '#!/bin/bash' \
-    'args=("$@")' \
-    'for i in "${!args[@]}"; do' \
-    '  case "${args[$i]}" in' \
-    '    git@brain-mirror:serlinolab/Serlinolab-Brain.git) args[$i]="$BRAIN_ROOT/repos/mirror.git" ;;' \
-    '    git@brain-team:serlinolab/brain-team.git) args[$i]="$BRAIN_ROOT/repos/team.git" ;;' \
-    '  esac' \
-    'done' \
-    'if [ "${FAIL_MIRROR:-0}" = 1 ] && [[ " $* " == *" git@brain-mirror:serlinolab/Serlinolab-Brain.git "* ]]; then exit 1; fi' \
-    'if [ "${FAIL_SPARSE:-0}" = 1 ] && [[ " $* " == *" sparse-checkout "* ]]; then exit 1; fi' \
-    '"$REAL_GIT" "${args[@]}" | sed -e "s#$BRAIN_ROOT/repos/mirror.git#git@brain-mirror:serlinolab/Serlinolab-Brain.git#g" -e "s#$BRAIN_ROOT/repos/team.git#git@brain-team:serlinolab/brain-team.git#g"' \
-    'exit "${PIPESTATUS[0]}"' > "$HOME/bin/git"
+  #
+  # repos_dir is baked into the wrapper AS A LITERAL at write time (this heredoc leaves every
+  # other `$` escaped, so only repos_dir itself interpolates) - it must never be read back from
+  # $BRAIN_ROOT at the wrapper's OWN run time, because MAX-1515 fix 4b tests invoke sync.sh
+  # with BRAIN_ROOT overridden to $HOME/Serlino (a different path than where these bare repos
+  # actually live); reading $BRAIN_ROOT dynamically there silently broke the sed rewrite and
+  # leaked the raw test-scratch path back out of `remote get-url`.
+  local repos_dir="$BRAIN_ROOT/repos"
+  cat > "$HOME/bin/git" <<EOF
+#!/bin/bash
+args=("\$@")
+for i in "\${!args[@]}"; do
+  case "\${args[\$i]}" in
+    git@brain-mirror:serlinolab/Serlinolab-Brain.git) args[\$i]="$repos_dir/mirror.git" ;;
+    git@brain-team:serlinolab/brain-team.git) args[\$i]="$repos_dir/team.git" ;;
+  esac
+done
+if [ "\${FAIL_MIRROR:-0}" = 1 ] && [[ " \$* " == *" git@brain-mirror:serlinolab/Serlinolab-Brain.git "* ]]; then exit 1; fi
+if [ "\${FAIL_SPARSE:-0}" = 1 ] && [[ " \$* " == *" sparse-checkout "* ]]; then exit 1; fi
+"\$REAL_GIT" "\${args[@]}" | sed -e "s#$repos_dir/mirror.git#git@brain-mirror:serlinolab/Serlinolab-Brain.git#g" -e "s#$repos_dir/team.git#git@brain-team:serlinolab/brain-team.git#g"
+exit "\${PIPESTATUS[0]}"
+EOF
   printf '%s\n' '#!/bin/bash' 'exit 0' > "$HOME/bin/launchctl"
   chmod +x "$HOME/bin/git" "$HOME/bin/launchctl"
   export PATH="$HOME/bin:$PATH"
@@ -74,6 +84,23 @@ teardown() {
   printf '%s' "$output" | grep -qF "$HOME/Serlino/team"
   printf '%s' "$output" | grep -qF "unrelated.example/team.git"
   [ ! -e "$HOME/Serlino/serlinolab" ]
+}
+
+@test "setup refuses an unrelated existing team repository and never reaches the launchd install" {
+  # MAX-1515 fix 4a: an adoption refusal used to only set setup_ok=0 and keep running -
+  # including installing and kickstarting the background job against the very folder setup
+  # just refused to touch. A refusal must exit immediately, before the plist is even written.
+  mkdir -p "$HOME/Serlino/.state"
+  printf 'parker-v2\n' > "$HOME/Serlino/.state/layout"
+  git init -q "$HOME/Serlino/team"
+  git -C "$HOME/Serlino/team" remote add origin https://unrelated.example/team.git
+  printf '%s\n' '#!/bin/bash' 'echo LAUNCHCTL_CALLED >> "$LAUNCHCTL_LOG"' 'exit 0' > "$HOME/bin/launchctl"
+  chmod +x "$HOME/bin/launchctl"
+  LAUNCHCTL_LOG="$BRAIN_ROOT/launchctl.log"; export LAUNCHCTL_LOG
+  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  [ ! -e "$HOME/Library/LaunchAgents/com.serlinolab.brainsync.plist" ]
+  [ ! -e "$LAUNCHCTL_LOG" ]
 }
 
 @test "setup refuses an unrelated mirror beside an otherwise valid team clone" {

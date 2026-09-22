@@ -3,6 +3,22 @@
 
 online(){ git ls-remote --exit-code "$ONLINE_CHECK_REMOTE" HEAD >/dev/null 2>&1; }
 
+# MAX-1515 fix 4b: a refused-then-later-swapped repo must never be touched just because it
+# sits at the expected path - every mutating function below re-checks this first. Verifies
+# BOTH the fetch URL and every push URL equal `expected` (a self-consistent fetch==push pair
+# pointing at the WRONG remote would otherwise sail through). Missing dir/.git is not a
+# mismatch - every caller already guards that separately.
+remote_matches_expected(){
+  local dir="$1" expected="$2" url
+  [ -d "$dir/.git" ] || return 0
+  url=$(git -C "$dir" remote get-url origin 2>/dev/null) || return 1
+  [ "$url" = "$expected" ] || return 1
+  while IFS= read -r url; do
+    [ "$url" = "$expected" ] || return 1
+  done < <(git -C "$dir" remote get-url --push --all origin 2>/dev/null)
+  return 0
+}
+
 # AC-2: files AND directories refuse writes - a stray new file can't be silently eaten by the next clean.
 protect_readonly(){
   local dir="$1"
@@ -27,6 +43,11 @@ TXT
 
 sync_mirror(){
   [ -d "$MIRROR/.git" ] || return 0
+  if ! remote_matches_expected "$MIRROR" "$EXPECTED_MIRROR_REMOTE"; then
+    log "mirror origin does not match the expected remote; refusing to touch it"
+    protect_readonly "$MIRROR"
+    return 1
+  fi
   local rc=0
   if ! git -C "$MIRROR" fetch --quiet origin; then
     log "mirror fetch failed"
@@ -47,6 +68,10 @@ sync_mirror(){
 # blocks the rest of the cycle - every other staged file still commits.
 commit_local(){
   [ -d "$TEAM/.git" ] || return 0
+  if ! remote_matches_expected "$TEAM" "$EXPECTED_TEAM_REMOTE"; then
+    log "team origin does not match the expected remote; refusing to touch it"
+    return 1
+  fi
   cd "$TEAM" || return 1
   local big secret rc=0
   local -a exclude_specs=()
@@ -114,6 +139,10 @@ save_conflict_copies(){
 
 sync_team(){
   [ -d "$TEAM/.git" ] || return 0
+  if ! remote_matches_expected "$TEAM" "$EXPECTED_TEAM_REMOTE"; then
+    log "team origin does not match the expected remote; refusing to touch it"
+    return 1
+  fi
   cd "$TEAM" || return 1
   local n
   n=$(cat "$CONFLICT_STATE" 2>/dev/null || echo 0)
@@ -144,6 +173,16 @@ sync_team(){
 
 update_attention_marker(){
   local big age_h secret_first
+  # fix 4b: an origin mismatch is worth telling a human about even before the other, more
+  # common conditions below - it means this repo was touched by something other than setup.sh.
+  if [ -d "$MIRROR/.git" ] && ! remote_matches_expected "$MIRROR" "$EXPECTED_MIRROR_REMOTE"; then
+    printf 'The company folder is not connected to where it should be.\nNothing in it was changed this time. Please tell Max.\n' > "$MARK"
+    return
+  fi
+  if [ -d "$TEAM/.git" ] && ! remote_matches_expected "$TEAM" "$EXPECTED_TEAM_REMOTE"; then
+    printf 'The team folder is not connected to where it should be.\nYour notes are safe on this Mac, unchanged. Please tell Max.\n' > "$MARK"
+    return
+  fi
   if [ -d "$TEAM/.git" ]; then
     big=$(find "$TEAM" -path "$TEAM/.git" -prune -o -type f -size +10240k -print 2>/dev/null | head -1)
     if [ -n "$big" ]; then

@@ -16,6 +16,13 @@ MAX_CONFLICT_ATTEMPTS=3          # AC-5: named constant, never a literal in the 
 CONFLICTS="$STATE/conflicts"      # AC-6: incoming copy of each conflicting file is saved here
 QUARANTINE="$STATE/quarantine"    # AC-4: locally-created instruction files are moved here, never deleted
 ONLINE_CHECK_REMOTE="${ONLINE_CHECK_REMOTE:-git@brain-mirror:serlinolab/Serlinolab-Brain.git}"
+# MAX-1515 fix 4b: what setup.sh ever adopts or creates team/ and the mirror against - the
+# engine re-checks a repo's origin against these before every cycle's mutating operations, so
+# a repo whose origin was changed after setup ran is never trusted just because it sits at the
+# right path. Overridable the same way ONLINE_CHECK_REMOTE already is, for the same reason
+# (a test double rewrites the URL going in).
+EXPECTED_TEAM_REMOTE="${EXPECTED_TEAM_REMOTE:-git@brain-team:serlinolab/brain-team.git}"
+EXPECTED_MIRROR_REMOTE="${EXPECTED_MIRROR_REMOTE:-git@brain-mirror:serlinolab/Serlinolab-Brain.git}"
 # Written once by setup.sh. It used to fall back to `basename "$PERSONAL"`, which is the
 # literal string "shared" for everyone - every creator's notes would have been committed as
 # one identity. Attribution is tied to pay (MAX-1515 AC-8), so an unknown person is recorded
