@@ -129,6 +129,8 @@ write_if_absent "$ROOT/personal/finds/README.md" personal-finds-README.md
 echo "Setting up the team folder..."
 expected_team='git@brain-team:serlinolab/brain-team.git'
 team_ready=0
+team_needs_checkout=0
+team_config_failed=0
 if [ -e "$ROOT/team" ]; then
   actual=$(git -C "$ROOT/team" remote get-url origin 2>/dev/null || echo '<missing origin>')
   if remote_matches "$ROOT/team" "$expected_team"; then
@@ -138,24 +140,20 @@ if [ -e "$ROOT/team" ]; then
     setup_ok=0
   fi
 else
-  # core.hooksPath is pinned to an ABSOLUTE path, both at clone time (-c, so it is in force
-  # before anything else runs) and explicitly afterward (belt and suspenders): a creator's
-  # global git config could set a relative core.hooksPath (e.g. .githooks), which - unpinned -
-  # would make git skip .git/hooks entirely and run whatever a colleague committed into
-  # team/.githooks/ instead. The repo-local value always wins over the global one.
-  #
-  # core.symlinks=false: a colleague can commit symlinks that point outside team/ (a
-  # credential directory, the mirror, the signpost). Materialized as real symlinks, writing
-  # through them would escape team/; with this set git checks them out as small plain files
-  # holding the target text instead.
-  if git clone --quiet -c core.hooksPath="$ROOT/team/.git/hooks" -c core.symlinks=false \
-       "$expected_team" "$ROOT/team" \
-     && git -C "$ROOT/team" config core.hooksPath "$ROOT/team/.git/hooks" \
-     && git -C "$ROOT/team" config core.symlinks false; then
+  # --no-checkout: nothing is written to the working tree by the clone itself. core.hooksPath
+  # and core.symlinks are pinned at clone time (-c, in force before anything else runs) and
+  # persisted below, so a permissive global hooksPath or a colleague's symlink never has a
+  # window to matter. HEAD is checked out explicitly, last, only once every configuration step
+  # below (hooksPath, symlinks, sparse-checkout, hooks) has succeeded - so a pre-existing
+  # committed CLAUDE.md/.claude never has a window to land on disk either.
+  if git clone --quiet --no-checkout -c core.hooksPath="$ROOT/team/.git/hooks" -c core.symlinks=false \
+       "$expected_team" "$ROOT/team"; then
     team_ready=1   # a fresh clone is trusted without re-checking remote_matches: a test
                     # double that rewrites the URL argument would make a freshly cloned
                     # origin fail a literal-string re-check even though the clone is correct
+    team_needs_checkout=1
   else
+    rm -rf "$ROOT/team"
     echo "Team folder clone pending - it will complete once Max has registered your key." >&2
     setup_ok=0
   fi
@@ -163,35 +161,68 @@ fi
 
 TEAM="$ROOT/team"
 if [ "$team_ready" -eq 1 ]; then
+  configure_ok=1
   echo "Configuring the team folder so it can never carry instruction files..."
-  git -C "$TEAM" config core.hooksPath "$TEAM/.git/hooks" || setup_ok=0
-  git -C "$TEAM" config core.symlinks false || setup_ok=0
+  # core.hooksPath: a creator's global git config could set a relative core.hooksPath (e.g.
+  # .githooks), which - unpinned - would make git skip .git/hooks entirely and run whatever a
+  # colleague committed into team/.githooks/ instead. The repo-local value always wins.
+  git -C "$TEAM" config core.hooksPath "$TEAM/.git/hooks" || configure_ok=0
+  # core.symlinks=false: a colleague can commit symlinks that point outside team/ (a
+  # credential directory, the mirror, the signpost). Materialized as real symlinks, writing
+  # through them would escape team/; with this set git checks them out as small plain files
+  # holding the target text instead.
+  git -C "$TEAM" config core.symlinks false || configure_ok=0
   # AC-4 structural layer: a colleague's CLAUDE.md/.claude never checks out here, at any
   # depth, regardless of whether they committed it as a file, a directory or a symlink.
   # Verified (2026-09-22): non-cone patterns without a leading slash match at every depth on
   # this git, so no **/ forms are needed. Shared with tests/helpers.bash via
   # lib/team_layout.sh so the two can never drift apart.
   # shellcheck source=lib/team_layout.sh
-  source "$ENGINE/lib/team_layout.sh" || setup_ok=0
-  write_team_sparse_checkout "$TEAM" || setup_ok=0
+  source "$ENGINE/lib/team_layout.sh" || configure_ok=0
+  write_team_sparse_checkout "$TEAM" || configure_ok=0
 
   echo "Installing the secret-scan hooks..."
   # shellcheck source=lib/secretscan.sh
-  source "$ENGINE/lib/secretscan.sh" || setup_ok=0
-  install_team_hooks "$TEAM" "$STATE/engine/lib" || setup_ok=0
+  source "$ENGINE/lib/secretscan.sh" || configure_ok=0
+  install_team_hooks "$TEAM" "$STATE/engine/lib" || configure_ok=0
 
-  echo "Cloning the company mirror..."
-  expected_mirror='git@brain-mirror:serlinolab/Serlinolab-Brain.git'
-  MIRROR="$ROOT/serlinolab"
-  if [ -e "$MIRROR" ]; then
-    actual=$(git -C "$MIRROR" remote get-url origin 2>/dev/null || echo '<missing origin>')
-    if ! remote_matches "$MIRROR" "$expected_mirror"; then
-      echo "Refusing to adopt $MIRROR: origin is $actual, expected $expected_mirror (including push URLs)." >&2
-      setup_ok=0
+  if [ "$configure_ok" -eq 1 ] && [ "$team_needs_checkout" -eq 1 ]; then
+    git -C "$TEAM" checkout --quiet main || configure_ok=0
+  fi
+
+  if [ "$configure_ok" -eq 1 ]; then
+    echo "Cloning the company mirror..."
+    expected_mirror='git@brain-mirror:serlinolab/Serlinolab-Brain.git'
+    MIRROR="$ROOT/serlinolab"
+    if [ -e "$MIRROR" ]; then
+      actual=$(git -C "$MIRROR" remote get-url origin 2>/dev/null || echo '<missing origin>')
+      if ! remote_matches "$MIRROR" "$expected_mirror"; then
+        echo "Refusing to adopt $MIRROR: origin is $actual, expected $expected_mirror (including push URLs)." >&2
+        setup_ok=0
+      fi
+    else
+      git clone --quiet "$expected_mirror" "$MIRROR" || { echo "Mirror clone pending - it will complete once Max has registered your key." >&2; setup_ok=0; }
     fi
   else
-    git clone --quiet "$expected_mirror" "$MIRROR" || { echo "Mirror clone pending - it will complete once Max has registered your key." >&2; setup_ok=0; }
+    # A configuration step failed: never leave a half-configured team/ - or an unchecked-out
+    # one - sitting on disk, and never install the background job against it this run.
+    setup_ok=0
+    team_config_failed=1
+    if [ "$team_needs_checkout" -eq 1 ]; then
+      rm -rf "$TEAM"
+      team_ready=0
+    fi
+    echo "Team folder configuration pending - it will complete on a later run." >&2
   fi
+fi
+
+if [ "$team_config_failed" -eq 1 ]; then
+  # Never install the background job against a run where the team folder configuration
+  # itself failed - the run above already removed any half-configured team/ clone.
+  rm -f "$DONE_MARK"
+  echo "Setup is incomplete; run it again after the pending steps are ready." >&2
+  echo "SERLINO-BRAIN-SETUP person=$PERSON_SLUG machine=$(hostname -s) mirror_key=$(cat "$MIRROR_KEY.pub" 2>/dev/null || true) team_key=$(cat "$TEAM_KEY.pub" 2>/dev/null || true)"
+  exit 1
 fi
 
 echo "Installing the background sync job..."

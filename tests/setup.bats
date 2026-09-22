@@ -41,6 +41,7 @@ setup_setup_test() {
     '  esac' \
     'done' \
     'if [ "${FAIL_MIRROR:-0}" = 1 ] && [[ " $* " == *" git@brain-mirror:serlinolab/Serlinolab-Brain.git "* ]]; then exit 1; fi' \
+    'if [ "${FAIL_SPARSE:-0}" = 1 ] && [[ " $* " == *" sparse-checkout "* ]]; then exit 1; fi' \
     '"$REAL_GIT" "${args[@]}" | sed -e "s#$BRAIN_ROOT/repos/mirror.git#git@brain-mirror:serlinolab/Serlinolab-Brain.git#g" -e "s#$BRAIN_ROOT/repos/team.git#git@brain-team:serlinolab/brain-team.git#g"' \
     'exit "${PIPESTATUS[0]}"' > "$HOME/bin/git"
   printf '%s\n' '#!/bin/bash' 'exit 0' > "$HOME/bin/launchctl"
@@ -221,6 +222,41 @@ teardown() {
   [ "$(cat "$HOME/Serlino/team/keys")" = "../../.ssh" ]
   [ -f "$HOME/Serlino/team/note" ]
   [ "$(cat "$HOME/Serlino/team/note")" = "../CLAUDE.md" ]
+}
+
+# Review fix 3: a normal `git clone` checks out HEAD before sparse-checkout is configured, so
+# a pre-existing committed CLAUDE.md/.claude briefly lands on disk. Push that content to the
+# team origin before the first setup - a --no-checkout clone, configured, then explicitly
+# checked out, never materializes it at all.
+push_colleague_instructions_to_team_origin() {
+  local teamwork; teamwork="$(mktemp -d)"
+  "$REAL_GIT" clone -q "$BRAIN_ROOT/repos/team.git" "$teamwork"
+  echo "colleague instructions" > "$teamwork/CLAUDE.md"
+  mkdir -p "$teamwork/.claude/rules"
+  echo "a rule" > "$teamwork/.claude/rules/x.md"
+  git -C "$teamwork" add -A
+  git -C "$teamwork" -c user.name=fixture -c user.email=fixture@example.com commit -qm "colleague adds instructions"
+  git -C "$teamwork" push -q origin main
+  rm -rf "$teamwork"
+}
+
+@test "a colleague's pre-existing CLAUDE.md and .claude never land on disk, even right after the first setup" {
+  push_colleague_instructions_to_team_origin
+  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/Serlino/team/CLAUDE.md" ]
+  [ ! -e "$HOME/Serlino/team/.claude" ]
+}
+
+@test "a failed team clone configuration leaves no team clone at all, and setup reports pending" {
+  push_colleague_instructions_to_team_origin
+  FAIL_SPARSE=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  [ ! -e "$HOME/Serlino/team" ]
+  [[ "$output" == *"pending"* ]] || false
+  [ ! -e "$HOME/Serlino/.state/setup-complete" ]
+  # a half-configured team/ must never leave the background job installed
+  [ ! -e "$HOME/Library/LaunchAgents/com.serlinolab.brainsync.plist" ]
 }
 
 @test "setup never overwrites an existing personal README" {
