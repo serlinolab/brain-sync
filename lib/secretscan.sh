@@ -7,5 +7,7 @@ SECRET_PATTERNS='-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{36,}|g
 
 # 0 (match) if the given file's content looks like it contains a secret.
 secret_scan_file(){
-  grep -qE "$SECRET_PATTERNS" -- "$1" 2>/dev/null
+  # -e marks the pattern explicitly: unguarded, "-----BEGIN..." is parsed as a grep option
+  # instead of a pattern and every call fails with "unrecognized option".
+  grep -qE -e "$SECRET_PATTERNS" -- "$1" 2>/dev/null
 }

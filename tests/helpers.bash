@@ -50,6 +50,23 @@ make_fake_brain_sync_origin() {
   git -C "$BRAIN_SYNC_WORK" remote add origin "$FAKE_ORIGIN"; git -C "$BRAIN_SYNC_WORK" push -q origin main
 }
 
+# AC-4: mirrors the sparse-checkout + local exclude setup.sh performs once, for tests that
+# need $TEAM to behave the way a real set-up Mac's team/ clone would (colleagues' instruction
+# files never check out; the nested mirror is never staged as a gitlink).
+configure_team_sparse_checkout() {
+  git -C "$TEAM" sparse-checkout init --no-cone >/dev/null 2>&1
+  cat > "$TEAM/.git/info/sparse-checkout" <<'EOF'
+/*
+!/serlinolab/
+!CLAUDE.md
+!CLAUDE.local.md
+!AGENTS.md
+!.claude/
+EOF
+  git -C "$TEAM" sparse-checkout reapply >/dev/null 2>&1
+  grep -qxF 'serlinolab/' "$TEAM/.git/info/exclude" 2>/dev/null || printf 'serlinolab/\n' >> "$TEAM/.git/info/exclude"
+}
+
 break_origin_sync_sh() {
   printf '#!/bin/bash\nexit 1\n' > "$BRAIN_SYNC_WORK/sync.sh"
   git -C "$BRAIN_SYNC_WORK" add sync.sh; git_commit "$BRAIN_SYNC_WORK" 'broken engine'; git -C "$BRAIN_SYNC_WORK" push -q origin main
