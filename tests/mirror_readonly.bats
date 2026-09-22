@@ -25,8 +25,8 @@ teardown() { brain_test_teardown; }
   # then writes into it dies in the next successful reset --hard.
   local root; root="$(mktemp -d)"
   seed_repo "$root/origin.git" "$root/serlinolab" sub/file.txt
-  git -C "$root/serlinolab" remote set-url origin "$root/missing-origin.git"
-  BRAIN_ROOT="$root" MIRROR="$root/serlinolab" run bash -c \
+  rm -rf "$root/origin.git"   # the origin URL is untouched (still matches EXPECTED below) - only the remote itself is gone, so this is a fetch failure, not an origin mismatch
+  BRAIN_ROOT="$root" MIRROR="$root/serlinolab" EXPECTED_MIRROR_REMOTE="$root/origin.git" run bash -c \
     "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; MIRROR='$root/serlinolab'; sync_mirror"
   local fetch_status=$status
   run bash -c "echo hi > '$root/serlinolab/sub/file.txt'"
@@ -65,6 +65,18 @@ teardown() { brain_test_teardown; }
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git" run bash "$REPO_ROOT/sync.sh"
   [ -e "$MIRROR/stray.txt" ]   # never cleaned - sync_mirror skipped this repo entirely
   grep -qi "company folder" "$MARK"   # plain words, not git vocabulary - see AC-8
+}
+
+@test "a mismatched mirror is never chmod'd read-only - it was refused, not synced" {
+  # MAX-1515 fix 3: sync_mirror used to call protect_readonly on the mismatch branch too, so a
+  # repo it explicitly refused to touch still lost its write bit - contradicting the marker,
+  # which says nothing was changed.
+  chmod -R u+w "$MIRROR"
+  git -C "$MIRROR" remote set-url origin "$BRAIN_ROOT/some-other-repo.git"
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git" run bash "$REPO_ROOT/sync.sh"
+  run bash -c "echo hi > '$MIRROR/after-mismatch.txt'"
+  [ "$status" -eq 0 ] || false
+  [ -e "$MIRROR/after-mismatch.txt" ]
 }
 
 @test "a file cannot be created during the protected fetch window" {

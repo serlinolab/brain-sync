@@ -50,7 +50,6 @@ sync_mirror(){
   [ -d "$MIRROR/.git" ] || return 0
   if ! remote_matches_expected "$MIRROR" "$EXPECTED_MIRROR_REMOTE"; then
     log "mirror origin does not match the expected remote; refusing to touch it"
-    protect_readonly "$MIRROR"
     return 1
   fi
   local rc=0
