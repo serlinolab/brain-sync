@@ -49,7 +49,10 @@ commit_local(){
   [ -d "$TEAM/.git" ] || return 0
   cd "$TEAM" || return 1
   local big secret rc=0
-  git add -A || { log "git add failed"; return 1; }
+  local -a exclude_specs=()
+  local spec
+  while IFS= read -r spec; do exclude_specs+=("$spec"); done < <(team_add_exclude_pathspecs)
+  git add -A -- . "${exclude_specs[@]}" || { log "git add failed"; return 1; }
   while IFS= read -r -d '' big; do
     log "REJECT oversized: ${big#./}"
     git reset -q -- "$big" || rc=1

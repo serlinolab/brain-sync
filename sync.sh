@@ -5,6 +5,7 @@ set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 source "$DIR/lib/secretscan.sh"
+source "$DIR/lib/team_layout.sh"
 source "$DIR/lib/sync.sh"
 
 # Self-update's smoke test: proves this copy sources cleanly and can run,
