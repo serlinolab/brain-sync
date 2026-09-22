@@ -13,5 +13,5 @@ load 'helpers'
 @test "README.md has a For Max section pointing at docs/runbook.md" {
   grep -q '^## For Max$' "$REPO_ROOT/README.md"
   run sed -n '/^## For Max$/,$p' "$REPO_ROOT/README.md"
-  [[ "$output" == *"docs/runbook.md"* ]]
+  [[ "$output" == *"docs/runbook.md"* ]] || false
 }

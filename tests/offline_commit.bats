@@ -9,7 +9,7 @@ teardown() { brain_test_teardown; }
   make_local_ahead_change
   run_sync_cycle
   run git -C "$TEAM" log -1 --pretty=%s
-  [[ "$output" == notes\ * ]]
+  [[ "$output" == notes\ * ]] || false
   [ "$(git -C "$TEAM" rev-list --count origin/main..HEAD)" -eq 1 ]
   grep -q "offline; local work is committed" "$LOG"
 }
@@ -37,9 +37,9 @@ teardown() { brain_test_teardown; }
   # things the engine computes would pass even when both are wrong. helpers.bash seeds
   # $STATE/person with "testperson", exactly as setup.sh does on a real Mac.
   [ "$(git -C "$TEAM" log -1 --format=%an)" = "Serlino Brain (testperson)" ]
-  [[ "$(git -C "$TEAM" log -1 --format=%ae)" == brain-testperson@* ]]
+  [[ "$(git -C "$TEAM" log -1 --format=%ae)" == brain-testperson@* ]] || false
   [ "$(git -C "$TEAM" log -1 --format=%cn)" = "Serlino Brain (testperson)" ]
-  [[ "$(git -C "$TEAM" log -1 --format=%ce)" == brain-testperson@* ]]
+  [[ "$(git -C "$TEAM" log -1 --format=%ce)" == brain-testperson@* ]] || false
 }
 
 @test "a foreign push URL is refused before personal notes are pushed" {

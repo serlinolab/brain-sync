@@ -86,9 +86,9 @@ teardown() { brain_test_teardown; }
   [ -f "$MIRROR/.claude/settings.local.json" ]
   python3 -m json.tool "$MIRROR/.claude/settings.local.json" >/dev/null
   local excludes; excludes=$(python3 -c "import json; print('\n'.join(json.load(open('$MIRROR/.claude/settings.local.json'))['claudeMdExcludes']))")
-  [[ "$excludes" == *"$TEAM/CLAUDE.md"* ]]
-  [[ "$excludes" == *"$TEAM/CLAUDE.local.md"* ]]
-  [[ "$excludes" == *"$TEAM/AGENTS.md"* ]]
+  [[ "$excludes" == *"$TEAM/CLAUDE.md"* ]] || false
+  [[ "$excludes" == *"$TEAM/CLAUDE.local.md"* ]] || false
+  [[ "$excludes" == *"$TEAM/AGENTS.md"* ]] || false
   [[ "$excludes" != *"$MIRROR/CLAUDE.md"* ]]   # never excludes the brand's own CLAUDE.md
 }
 

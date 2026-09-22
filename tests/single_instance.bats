@@ -20,7 +20,7 @@ teardown() { brain_test_teardown; }
   touch -t 202001010000 "$LOCK"
   run bash -c "source '$REPO_ROOT/lib/common.sh'; acquire_lock && echo taken"
   [ "$status" -eq 0 ]
-  [[ "$output" == *taken* ]]
+  [[ "$output" == *taken* ]] || false
   grep -q "broke a lock abandoned" "$LOG"
 }
 

@@ -17,7 +17,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
 @test "refuses a malformed person slug and makes no gh call" {
   run bash "$REPO_ROOT/provision.sh" "SERLINO-BRAIN-SETUP person=Alice! machine=m mirror_key=ssh-ed25519 AAAA c team_key=ssh-ed25519 AAAA c"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"Refusing"* ]]
+  [[ "$output" == *"Refusing"* ]] || false
   [ ! -d "$FAKE_GH_STATE/repos" ] || [ -z "$(ls -A "$FAKE_GH_STATE/repos" 2>/dev/null)" ]
 }
 
@@ -46,7 +46,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   [ "$status" -eq 0 ]
   run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"already registered"* ]]
+  [[ "$output" == *"already registered"* ]] || false
   [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
   [ "$(key_line_count "$BRAIN_ORG/brain-team")" = 1 ]
 }
@@ -57,7 +57,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   local other="SERLINO-BRAIN-SETUP person=alice machine=alices-mac mirror_key=ssh-ed25519 AAAAdifferent brain-mirror-alices-mac team_key=ssh-ed25519 AAAAteam brain-team-alice"
   run bash "$REPO_ROOT/provision.sh" "$other"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"different key"* ]]
+  [[ "$output" == *"different key"* ]] || false
   [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
 }
 
@@ -67,14 +67,14 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   local other="SERLINO-BRAIN-SETUP person=bob machine=bobs-mac mirror_key=ssh-ed25519 AAAAmirror brain-mirror-alices-mac team_key=ssh-ed25519 AAAAteam2 brain-team-bob"
   run bash "$REPO_ROOT/provision.sh" "$other"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"different title"* ]]
+  [[ "$output" == *"different title"* ]] || false
   [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
 }
 
 @test "refuses when the deploy-key lookup itself fails, and registers nothing" {
   FAKE_GH_FAIL_KEYS_LOOKUP=1 run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"could not look up existing deploy keys"* ]]
+  [[ "$output" == *"could not look up existing deploy keys"* ]] || false
   ! repo_exists "$BRAIN_ORG/brain-team"
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
 }
@@ -87,7 +87,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
     || sed -i 's/\ttrue$/\tfalse/' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys"
   run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"read_only=false"*"expected read_only=true"* ]]
+  [[ "$output" == *"read_only=false"*"expected read_only=true"* ]] || false
   [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
 }
 
@@ -103,7 +103,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   [ "$(wc -l < "$keyfile" | tr -d ' ')" = 31 ]
   run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"already registered"* ]]
+  [[ "$output" == *"already registered"* ]] || false
   [ "$(wc -l < "$keyfile" | tr -d ' ')" = 31 ]   # not re-registered as a 32nd row
 }
 
@@ -115,7 +115,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   sed -i '' 's/ brain-mirror-alices-mac\t/\t/' "$keyfile" 2>/dev/null || sed -i 's/ brain-mirror-alices-mac\t/\t/' "$keyfile"
   run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"already registered"* ]]
+  [[ "$output" == *"already registered"* ]] || false
   [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
 }
 
@@ -125,7 +125,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   touch "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team"
   run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"has no initial commit yet"* ]]
+  [[ "$output" == *"has no initial commit yet"* ]] || false
   [ -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.readme" ]
 }
 

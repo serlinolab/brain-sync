@@ -84,7 +84,7 @@ teardown() {
   git -C "$HOME/Serlino/team/serlinolab" remote add origin https://unrelated.example/mirror.git
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"$HOME/Serlino/team/serlinolab"*"unrelated.example/mirror.git"* ]]
+  [[ "$output" == *"$HOME/Serlino/team/serlinolab"*"unrelated.example/mirror.git"* ]] || false
 }
 
 @test "setup records person once and refuses a later different person" {
@@ -93,7 +93,7 @@ teardown() {
   BRAIN_PERSON=bob run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
   [ "$(cat "$HOME/Serlino/.state/person")" = alice ]
-  [[ "$output" == *"found 'alice', requested 'bob'"* ]]
+  [[ "$output" == *"found 'alice', requested 'bob'"* ]] || false
 }
 
 @test "person mismatch stops before cloning a missing team checkout" {
@@ -103,7 +103,7 @@ teardown() {
   BRAIN_PERSON=bob run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
   [ ! -e "$HOME/Serlino/team" ]
-  [[ "$output" == *"found 'alice', requested 'bob'"* ]]
+  [[ "$output" == *"found 'alice', requested 'bob'"* ]] || false
 }
 
 @test "setup refuses a correct fetch URL with a foreign push URL" {
@@ -114,7 +114,7 @@ teardown() {
   git -C "$HOME/Serlino/team" remote set-url --add --push origin ssh://attacker.invalid/leak.git
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"including push URLs"* ]]
+  [[ "$output" == *"including push URLs"* ]] || false
 }
 
 @test "setup does not adopt team/serlinolab through team's own repository" {
@@ -128,7 +128,7 @@ teardown() {
   mkdir -p "$HOME/Serlino/team/serlinolab"
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"$HOME/Serlino/team/serlinolab"*"including push URLs"* ]]
+  [[ "$output" == *"$HOME/Serlino/team/serlinolab"*"including push URLs"* ]] || false
 }
 
 @test "malformed private keys do not leave an empty public key" {
@@ -160,7 +160,7 @@ teardown() {
   [ "$(cat "$HOME/Serlino/.state/layout")" = parker-v1 ]
   [ -x "$HOME/Serlino/team/.git/hooks/pre-commit" ]
   [ -x "$HOME/Serlino/team/.git/hooks/pre-push" ]
-  [[ "$output" == *"SERLINO-BRAIN-SETUP person=alice machine="*"mirror_key=ssh-ed25519"*"team_key=ssh-ed25519"* ]]
+  [[ "$output" == *"SERLINO-BRAIN-SETUP person=alice machine="*"mirror_key=ssh-ed25519"*"team_key=ssh-ed25519"* ]] || false
 }
 
 @test "setup never overwrites an existing personal README" {
@@ -179,7 +179,7 @@ teardown() {
   mkdir -p "$HOME/Serlino/personal/shared" "$HOME/Serlino/serlinolab"
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"was not made by this setup"* ]]
+  [[ "$output" == *"was not made by this setup"* ]] || false
   [ ! -d "$HOME/Serlino/team" ]
   [ ! -f "$HOME/Serlino/CLAUDE.md" ]
 }
@@ -188,7 +188,7 @@ teardown() {
   mkdir -p "$HOME/Serlino/whatever"
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"was not made by this setup"* ]]
+  [[ "$output" == *"was not made by this setup"* ]] || false
   [ ! -d "$HOME/Serlino/.state" ]
 }
 

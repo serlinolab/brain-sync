@@ -33,9 +33,9 @@ fake_sk_proj() { printf 'sk-proj-%s\n' "$(printf 'a%.0s' $(seq 1 80))"; }
   git -C "$TEAM" add secret.txt
   run git -C "$TEAM" commit -qm 'oops'
   [ "$status" -ne 0 ]
-  [[ "$output" == *"looks like it contains a secret"* ]]
+  [[ "$output" == *"looks like it contains a secret"* ]] || false
   run git -C "$TEAM" log --oneline
-  [[ "$output" != *oops* ]]
+  [[ "$output" != *oops* ]] || false
 }
 
 @test "the pre-commit hook scans the STAGED blob, not the working-tree copy that was later overwritten" {
@@ -46,7 +46,7 @@ fake_sk_proj() { printf 'sk-proj-%s\n' "$(printf 'a%.0s' $(seq 1 80))"; }
   echo "harmless, edited after staging" > "$TEAM/secret.txt"   # working tree no longer looks like a secret
   run git -C "$TEAM" commit -qm 'still carries the staged secret'
   [ "$status" -ne 0 ]
-  [[ "$output" == *"looks like it contains a secret"* ]]
+  [[ "$output" == *"looks like it contains a secret"* ]] || false
 }
 
 @test "the pre-commit hook fails CLOSED when the secret-scan library cannot be loaded" {
@@ -57,7 +57,7 @@ fake_sk_proj() { printf 'sk-proj-%s\n' "$(printf 'a%.0s' $(seq 1 80))"; }
   run git -C "$TEAM" commit -qm 'should be refused'
   [ "$status" -ne 0 ]
   run git -C "$TEAM" log --oneline
-  [[ "$output" != *"should be refused"* ]]
+  [[ "$output" != *"should be refused"* ]] || false
 }
 
 @test "the pre-push hook refuses a push that carries a secret even if it slipped past pre-commit" {
@@ -69,7 +69,7 @@ fake_sk_proj() { printf 'sk-proj-%s\n' "$(printf 'a%.0s' $(seq 1 80))"; }
 
   run git -C "$TEAM" push origin main
   [ "$status" -ne 0 ]
-  [[ "$output" == *"looks like it contains a secret"* ]]
+  [[ "$output" == *"looks like it contains a secret"* ]] || false
   run git -C "$BRAIN_ROOT/origin-team.git" show main:secret.txt
   [ "$status" -ne 0 ]
 }
@@ -86,7 +86,7 @@ fake_sk_proj() { printf 'sk-proj-%s\n' "$(printf 'a%.0s' $(seq 1 80))"; }
 
   run git -C "$TEAM" push origin main
   [ "$status" -ne 0 ]
-  [[ "$output" == *"looks like it contains a secret"* ]]
+  [[ "$output" == *"looks like it contains a secret"* ]] || false
   run git -C "$BRAIN_ROOT/origin-team.git" rev-parse main
   [ "$status" -ne 0 ] || [ "$output" != "$(git -C "$TEAM" rev-parse HEAD)" ]
 }
@@ -110,5 +110,5 @@ fake_sk_proj() { printf 'sk-proj-%s\n' "$(printf 'a%.0s' $(seq 1 80))"; }
   git -C "$TEAM" add secret.txt
   run git -C "$TEAM" commit -qm 'oops'
   [ "$status" -ne 0 ]
-  [[ "$output" == *"looks like it contains a secret"* ]]
+  [[ "$output" == *"looks like it contains a secret"* ]] || false
 }

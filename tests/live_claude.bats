@@ -19,5 +19,5 @@ load 'helpers'
 
   run bash -c "cd '$brand' && claude -p 'What is the marker word? Answer with only the marker.'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"$marker"* ]]
+  [[ "$output" == *"$marker"* ]] || false
 }

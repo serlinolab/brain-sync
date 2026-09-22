@@ -10,9 +10,9 @@ teardown() { brain_test_teardown; }
   echo 'secret plan' > "$PERSONAL/ideas/plan.txt"
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle
   run git -C "$BRAIN_ROOT/origin-team.git" show main --stat
-  [[ "$output" != *"plan.txt"* ]]
+  [[ "$output" != *"plan.txt"* ]] || false
   run git -C "$BRAIN_ROOT/origin-mirror.git" show main --stat
-  [[ "$output" != *"plan.txt"* ]]
+  [[ "$output" != *"plan.txt"* ]] || false
   [ ! -d "$PERSONAL/.git" ]
   [ ! -d "$PERSONAL/ideas/.git" ]
 }
@@ -26,8 +26,8 @@ teardown() { brain_test_teardown; }
   run grep -n 'PERSONAL' "$REPO_ROOT/setup.sh"
   # the only occurrences of PERSONAL left in setup.sh are the personal/ folder scaffolding
   # (mkdir + write_if_absent), never a WatchPaths entry
-  [[ "$output" != *WatchPaths* ]]
+  [[ "$output" != *WatchPaths* ]] || false
   run grep -A2 'WatchPaths' "$REPO_ROOT/setup.sh"
-  [[ "$output" == *'$TEAM_XML'* ]]
-  [[ "$output" != *'personal'* ]]
+  [[ "$output" == *'$TEAM_XML'* ]] || false
+  [[ "$output" != *'personal'* ]] || false
 }
