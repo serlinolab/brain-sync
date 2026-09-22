@@ -21,16 +21,21 @@ secret_scan_file(){
 # Both hooks fail CLOSED on every error, not just a missing library: a scan that cannot run
 # (grep itself erroring - exit status 2, distinct from "no match" at 1) refuses exactly like a
 # match does; only an explicit "scanned, no match" (grep exit 0/1 respectively) lets a blob
-# through. Same for a failing `git rev-list`/`git cat-file`/`git show` and an invalid range.
+# through. Same for a failing `git rev-list`/`git cat-file`/`git show`/`git diff --cached` and
+# an invalid range.
 #
-# pre-commit reads each staged blob via `git show :<path>` (never the working-tree copy,
-# which may differ from what's staged). pre-push enumerates every BLOB OBJECT reachable from
-# the pushed commits that the remote does not already have (`git rev-list --objects`, keeping
-# only objects `git cat-file -t` reports as `blob`), not the tree of each commit via
-# `diff-tree` - diff-tree's --diff-filter=ACMR misses type-change (T) commits, shows nothing
-# for a root commit unless given --root, and shows nothing for a clean merge commit unless
-# given -m. Object enumeration has none of those blind spots: every blob touched anywhere in
-# the range is scanned once, regardless of which commit shape introduced it.
+# pre-commit enumerates staged paths via `git diff --cached --name-only -z
+# --diff-filter=ACMRT`, captured into a temp file first (not read straight out of a process
+# substitution, whose failure would otherwise be invisible to the while loop), then reads each
+# staged blob via `git show :<path>` (never the working-tree copy, which may differ from
+# what's staged). pre-push enumerates every BLOB OBJECT reachable from the pushed commits that
+# the remote does not already have (`git rev-list --objects`, keeping only objects `git
+# cat-file -t` reports as `blob`), not the tree of each commit via `diff-tree`. Both hooks use
+# ...ACMRT, not ...ACMR: the T (type-change, e.g. symlink -> regular file) carries a secret
+# exactly like a Modified file does, and ACMR alone never sees it. `diff-tree` also shows
+# nothing for a root commit unless given --root, and nothing for a clean merge commit unless
+# given -m - pre-push's object enumeration has none of those blind spots: every blob touched
+# anywhere in the range is scanned once, regardless of which commit shape introduced it.
 install_team_hooks(){
   local team="$1" libdir="$2"
   local hooks="$team/.git/hooks"
@@ -42,24 +47,38 @@ if ! source "__LIBDIR__/secretscan.sh" 2>/dev/null; then
   echo "refusing commit: the secret-scan library could not be loaded" >&2
   exit 1
 fi
+# Captured into a temp file first, not read straight out of a process substitution: a failing
+# `git diff --cached` inside `< <(...)` is invisible to the while loop (it just sees no
+# input and exits 0), so its exit status has to be checked explicitly to fail closed.
+# --diff-filter=ACMRT (not ACMR): T (typechange, e.g. symlink -> regular file) carries a
+# secret exactly like a Modified file does, and ACMR alone never sees it.
+list_file=$(mktemp) || { echo "refusing commit: could not scan the staged files" >&2; exit 1; }
+if ! git diff --cached --name-only -z --diff-filter=ACMRT > "$list_file"; then
+  rm -f "$list_file"
+  echo "refusing commit: could not enumerate the staged files" >&2
+  exit 1
+fi
 while IFS= read -r -d '' f; do
-  tmp=$(mktemp) || { echo "refusing commit: could not scan $f" >&2; exit 1; }
+  tmp=$(mktemp) || { rm -f "$list_file"; echo "refusing commit: could not scan $f" >&2; exit 1; }
   if ! git show ":$f" > "$tmp" 2>/dev/null; then
-    rm -f "$tmp"
+    rm -f "$tmp" "$list_file"
     printf 'refusing commit: could not read the staged content of %s\n' "$f" >&2
     exit 1
   fi
   secret_scan_file "$tmp"; scan_rc=$?
   rm -f "$tmp"
   if [ "$scan_rc" -eq 0 ]; then
+    rm -f "$list_file"
     printf 'refusing commit: %s looks like it contains a secret (a password or access key)\n' "$f" >&2
     exit 1
   fi
   if [ "$scan_rc" -ge 2 ]; then
+    rm -f "$list_file"
     printf 'refusing commit: the secret scan itself failed on %s\n' "$f" >&2
     exit 1
   fi
-done < <(git diff --cached --name-only -z --diff-filter=ACMR)
+done < "$list_file"
+rm -f "$list_file"
 exit 0
 HOOK
   cat > "$hooks/pre-push" <<'HOOK' || return 1

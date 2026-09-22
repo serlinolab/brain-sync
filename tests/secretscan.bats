@@ -233,3 +233,51 @@ fake_sk_proj() { printf 'sk-proj-%s\n' "$(printf 'a%.0s' $(seq 1 80))"; }
   run git -C "$TEAM" log --oneline
   [[ "$output" != *"should be refused"* ]] || false
 }
+
+# --- Review fix 4: the pre-commit hook must fail CLOSED when it cannot even enumerate the
+# staged files, and must not miss a secret that arrives via a type-change (T) commit ---
+
+@test "the pre-commit hook fails CLOSED when enumerating staged files itself fails" {
+  install_test_team_hooks
+
+  local fakebin; fakebin="$(mktemp -d)"
+  local real_git; real_git="$(type -P git)"
+  cat > "$fakebin/git" <<'FAKEGIT'
+#!/bin/bash
+if [ "$1" = diff ] && [[ " $* " == *" --cached "* ]]; then exit 1; fi
+exec "__REALGIT__" "$@"
+FAKEGIT
+  sed -i '' "s#__REALGIT__#$real_git#" "$fakebin/git" 2>/dev/null || sed -i "s#__REALGIT__#$real_git#" "$fakebin/git"
+  chmod +x "$fakebin/git"
+
+  echo "totally ordinary content" > "$TEAM/ordinary.txt"
+  git -C "$TEAM" add ordinary.txt
+  # Invoked directly, not via `git commit`: git prepends its own exec-path to PATH before
+  # running a hook it spawns, so a same-named fake "git" placed only in $PATH can never win
+  # that race from inside a real commit. Running the hook script ourselves is the only way to
+  # control what "git" resolves to for its internal enumeration call.
+  PATH="$fakebin:$PATH" run bash -c "cd '$TEAM' && exec '$TEAM/.git/hooks/pre-commit'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"could not enumerate"* ]] || false
+}
+
+@test "the pre-commit hook catches a secret staged via a TYPE-CHANGE (symlink -> regular file), which --diff-filter=ACMR alone misses" {
+  install_test_team_hooks
+
+  ln -s /nonexistent "$TEAM/cred"
+  git -C "$TEAM" add cred
+  git -C "$TEAM" -c user.name=t -c user.email=t@t.com commit --no-verify -qm 'cred starts as a symlink'
+  rm -f "$TEAM/cred"
+  fake_github_pat > "$TEAM/cred"
+  git -C "$TEAM" add cred
+  # confirms the setup: a path that changes kind (symlink -> regular file) is reported as
+  # Typechange (T), not Modified (M) - --diff-filter=ACMR alone never sees it
+  run git -C "$TEAM" diff --cached --name-only --diff-filter=ACMR
+  [ -z "$output" ]
+
+  run git -C "$TEAM" commit -qm 'should be refused'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"looks like it contains a secret"* ]] || false
+  run git -C "$TEAM" log --oneline
+  [[ "$output" != *"should be refused"* ]] || false
+}
