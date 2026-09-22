@@ -15,3 +15,15 @@ load 'helpers'
   run sed -n '/^## For Max$/,$p' "$REPO_ROOT/README.md"
   [[ "$output" == *"docs/runbook.md"* ]] || false
 }
+
+# Review fix 7: setup does not finish itself on the first run - part of it waits on Max. The
+# creator pastes the line once, sends Max what it prints, and pastes the SAME line again once
+# Max confirms he is done, to pick up where the first run left off.
+@test "the creator-facing section says to run the setup line a second time once Max confirms" {
+  local creator_section
+  creator_section=$(sed -n '1,/^## For Max$/p' "$REPO_ROOT/README.md" | sed '$d')
+  run grep -qi 'again' <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  run grep -qi 'second run\|paste.*again\|run it again\|run the.*line again' <<<"$creator_section"
+  [ "$status" -eq 0 ]
+}

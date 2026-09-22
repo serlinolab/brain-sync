@@ -1,6 +1,6 @@
 # Serlino Brain — Mac sync
 
-## Setup (do this once)
+## Setup (two short steps)
 
 Paste this into Terminal and press return:
 
@@ -8,11 +8,16 @@ Paste this into Terminal and press return:
 curl -fsSL https://raw.githubusercontent.com/serlinolab/brain-sync/main/setup.sh | bash
 ```
 
-It asks for your name, then finishes on its own. At the end it prints one
-line starting with `SERLINO-BRAIN-SETUP` — copy that whole line and send it
-to Max. That's the only thing you ever need to send him.
+It asks for your name, then does everything it can on its own. At the end
+it prints one line starting with `SERLINO-BRAIN-SETUP` — copy that whole
+line and send it to Max. That's the only thing you ever need to send him.
 
-Running the line again on a Mac that's already set up does nothing, and tells you so.
+Part of setting you up happens on Max's side, so the first run can't finish
+everything by itself. Once Max tells you he's done, paste the exact same
+line into Terminal and press return again — that second run picks up where
+the first one left off and finishes the rest.
+
+Running the line again once everything is already finished does nothing, and tells you so.
 
 ## What you'll see
 
