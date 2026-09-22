@@ -97,6 +97,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   [ "$status" -ne 0 ]
   [[ "$output" == *"read_only=false"*"expected read_only=true"* ]] || false
   [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
+  [ "$(key_line_count "$BRAIN_ORG/brain-team")" = 1 ]   # phase 1 failure - the team key is untouched too
 }
 
 @test "paginates the key listing - a key past the fixture's default page size is still recognized as registered" {
@@ -207,6 +208,26 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   [ "$status" -ne 0 ]
   [[ "$output" == *"not private"* ]] || false
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
+  # fix 3: phase 1 (the mirror check) fails before phase 2 (which creates the team repo) ever runs
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team" ]
+}
+
+# --- fix 3: phase 1 does EVERY read-only check before phase 2 mutates anything. A failure at
+# any point in phase 1 - mirror public (above), a team-key lookup 5xx (below), or a team key
+# read_only mismatch (above) - must record zero mutations: no team repo created, no README
+# written, no key registered on either repo. ---
+
+@test "refuses when the team-key lookup itself 5xxs, and creates nothing - even though the team repo already exists and the mirror check already passed" {
+  mkdir -p "$FAKE_GH_STATE/repos"
+  printf 'true\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team"
+  touch "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.readme"
+  FAKE_GH_FAIL_KEYS_LOOKUP="brain-team" run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"could not look up existing deploy keys"* ]] || false
+  # the mirror check (and its own key check) ran fine and is not itself the failure, but phase 1
+  # as a whole still failed, so its key was never registered either
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys")" ]
 }
 
 @test "refuses when the mirror repo does not exist, and registers no keys" {

@@ -5,6 +5,8 @@
 #
 # Failure-simulation knobs (env vars a test sets before calling provision.sh):
 #   FAKE_GH_FAIL_KEYS_LOOKUP=1        - `api repos/*/*/keys` GET exits 1 (transient API failure)
+#                                        on EVERY repo; set to a repo name instead (e.g.
+#                                        "brain-team") to fail only that repo's lookup
 #   FAKE_GH_PAGE_SIZE=<n>             - caps a keys listing to <n> rows unless --paginate is passed
 #                                        (default 30, GitHub's real default page size)
 #   FAKE_GH_REPO_VIEW_5XX=1           - `api repos/ORG/REPO` GET exits 1 with "HTTP 500" on
@@ -61,9 +63,17 @@ case "$cmd" in
       repos/*/*/keys)
         org=$(echo "$path" | cut -d/ -f2); repo=$(echo "$path" | cut -d/ -f3)
         keyfile="$STATE/repos/${org}__${repo}.keys"
-        touch "$keyfile"
         if [ "$method" = GET ]; then
           [ "${FAKE_GH_FAIL_KEYS_LOOKUP:-0}" = 1 ] && exit 1
+          [ "${FAKE_GH_FAIL_KEYS_LOOKUP:-0}" = "$repo" ] && exit 1
+          # Real GitHub 404s a keys lookup on a repo that does not exist - a repo marker
+          # file (not the .keys file, which nothing but this endpoint ever writes) is how
+          # every other endpoint here already decides existence.
+          if [ ! -e "$STATE/repos/${org}__${repo}" ]; then
+            echo "gh: Not Found (HTTP 404)" >&2
+            exit 1
+          fi
+          touch "$keyfile"
           local_rows() { if [ "$paginate" = 1 ]; then cat "$keyfile"; else head -n "$PAGE_SIZE" "$keyfile"; fi; }
           if [ -n "$jqexpr" ]; then
             case "$jqexpr" in

@@ -181,15 +181,24 @@ ensure_team_repo(){
     -f message="Initial commit" -f content="$content" -f branch=main >/dev/null
 }
 
-# Class C review fix 6: every lookup and validation this run will need - repo identity and
-# privacy for BOTH repositories, and the key-registration decision for BOTH keys - runs here.
-# Nothing in this function mutates anything while DRY_RUN is forced to 1 below (ensure_team_repo
-# and register_key both already gate their one mutating call on it), so calling it once as a
-# pre-flight check means a failure discovered on the second or third step - a lookup, a
-# conflict, a read_only mismatch - can never leave the first step's mutation (creating the team
-# repo) already applied.
-run_checks(){
-  ensure_team_repo || return 1
+# MAX-1515 fixes 2/3: phase 1 is every read-only check this run will need - repo identity and
+# privacy for BOTH repositories, and the key-registration decision for BOTH keys - and it
+# structurally never mutates anything (`dry` forces a function's own DRY_RUN gate on for the
+# one call, regardless of what was requested on the command line, so phase 1 reuses
+# register_key's existing check logic - title/key/read_only - without ever reaching its
+# mutating branch). A team repo that does not exist yet is not a failure here: there is no
+# keys endpoint to look up on a repo that does not exist, so that check is skipped and left to
+# phase 2, which creates the repo first (fix 2 - a first-ever provisioning used to look up
+# keys on the not-yet-created team repo and refuse every time).
+dry(){ local saved="$DRY_RUN"; DRY_RUN=1; "$@"; local rc=$?; DRY_RUN="$saved"; return "$rc"; }
+
+phase1_checks(){
+  verify_repo_identity "$TEAM_REPO"; local team_rc=$? team_exists=0
+  case "$team_rc" in
+    0) team_exists=1 ;;
+    1) team_exists=0 ;;   # confirmed absent - fine, phase 2 creates it
+    *) return 1 ;;   # verify_repo_identity already printed the refusal
+  esac
 
   verify_repo_identity "$MIRROR_REPO"; local mirror_rc=$?
   case "$mirror_rc" in
@@ -201,15 +210,23 @@ run_checks(){
     *) return 1 ;;   # verify_repo_identity already printed the refusal
   esac
 
+  dry register_key "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || return 1
+  if [ "$team_exists" -eq 1 ]; then
+    dry register_key "$TEAM_REPO" "brain-team $person $machine" "$team_key" false || return 1
+  fi
+}
+
+# Mutations only, and only ever called once phase1_checks has passed in full.
+# ponytail: a concurrent external change to either repo between phase 1 and phase 2 is not
+# guarded here - single operator, seconds apart, running this by hand once per new person/Mac.
+phase2_mutate(){
+  ensure_team_repo || return 1
   register_key "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || return 1
   register_key "$TEAM_REPO" "brain-team $person $machine" "$team_key" false || return 1
 }
 
-requested_dry_run="$DRY_RUN"
-DRY_RUN=1
-run_checks || exit 1
-DRY_RUN="$requested_dry_run"
-[ "$requested_dry_run" -eq 1 ] && exit 0
+phase1_checks || exit 1
+[ "$DRY_RUN" -eq 1 ] && exit 0
 
-run_checks || exit 1
+phase2_mutate || exit 1
 echo "Provisioning complete for $person@$machine."
