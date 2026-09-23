@@ -29,7 +29,7 @@ fi
 person_warn
 # MAX-1515 change A, amended by review finding B: finish a pending setup (the deploy key may
 # just have been registered) before doing anything else this cycle. Never trusts
-# $STATE/team-configured or $STATE/setup-complete as proof team/ or serlinolab/ are actually
+# $STATE/team-configured or $STATE/setup-complete as proof team/ or Serlinolab_Brain/ are actually
 # ready - both can survive a replacement directory that was never reconfigured.
 # team_is_protected/mirror_is_ready (lib/complete_setup.sh) re-derive the real state instead,
 # every cycle, so a finished Mac's cycles skip the call below without ever trusting a marker.

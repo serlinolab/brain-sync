@@ -2,7 +2,7 @@
 # Serlino Brain - one-time Mac setup. Paste-and-run:
 #   curl -fsSL https://raw.githubusercontent.com/serlinolab/brain-sync/main/setup.sh | bash
 set -u
-ROOT="$HOME/Serlino"; STATE="$ROOT/.state"; ENGINE="$STATE/engine"
+ROOT="$HOME/Serlinolab"; STATE="$ROOT/.state"; ENGINE="$STATE/engine"
 DONE_MARK="$STATE/setup-complete"
 LAYOUT_MARK="$STATE/layout"
 BRAIN_SYNC_REMOTE="${BRAIN_SYNC_REMOTE:-https://github.com/serlinolab/brain-sync.git}"
@@ -18,7 +18,7 @@ SSH_CONFIG="$HOME/.ssh/config"
 if [ -e "$ROOT" ]; then
   existing_layout=$(cat "$LAYOUT_MARK" 2>/dev/null || true)
   if [ "$existing_layout" != "parker-v2" ]; then
-    echo "A Serlino folder already exists on this Mac and was not made by this setup. Nothing was changed. Please tell Max." >&2
+    echo "A Serlinolab folder already exists on this Mac and was not made by this setup. Nothing was changed. Please tell Max." >&2
     exit 1
   fi
 fi
@@ -32,7 +32,12 @@ printf 'parker-v2\n' > "$LAYOUT_MARK"
 PERSON="${BRAIN_PERSON:-}"
 if [ -z "$PERSON" ]; then
   if [ -t 1 ]; then
-    read -r -p "Your name (used to credit your notes): " PERSON < /dev/tty 2>/dev/null || PERSON=""
+    # `read -p` sends its prompt to stderr, not the terminal it reads from - piped through
+    # `curl | bash` (README's own paste-and-run line) stderr can be silently swallowed, so the
+    # prompt never appeared and the terminal looked frozen (hit live by Max). Print the question
+    # to /dev/tty ourselves, then read the answer from /dev/tty with no prompt of read's own.
+    printf 'Your first name (it signs the notes you share in team/): ' > /dev/tty
+    read -r PERSON < /dev/tty || PERSON=""
   else
     echo "No terminal is available. Set BRAIN_PERSON and run setup again." >&2
     exit 1
@@ -133,12 +138,12 @@ source "$ENGINE/lib/complete_setup.sh" || { echo "Sync engine is missing lib/com
 # shellcheck source=lib/common.sh
 source "$ENGINE/lib/common.sh" || { echo "Sync engine is missing lib/common.sh." >&2; exit 1; }
 # common.sh re-derives ROOT from $BRAIN_ROOT (a sync-cycle override this script never accepts -
-# setup.sh's folder is always $HOME/Serlino) and STATE/TEAM/PERSON_SLUG from that, which would
+# setup.sh's folder is always $HOME/Serlinolab) and STATE/TEAM/PERSON_SLUG from that, which would
 # silently point acquire_lock's own lock, and complete_setup's own targets, at the wrong place
 # (and re-derive the wrong person) whenever $BRAIN_ROOT happens to be set in the environment
 # for something else entirely. Restore this script's own values immediately - the ONE thing
 # this source is for is acquire_lock/cleanup_lock.
-ROOT="$HOME/Serlino"; STATE="$ROOT/.state"; LOCK="$STATE/run.lock"; TEAM="$ROOT/team"
+ROOT="$HOME/Serlinolab"; STATE="$ROOT/.state"; LOCK="$STATE/run.lock"; TEAM="$ROOT/team"
 PERSON_SLUG="$(cat "$STATE/person" 2>/dev/null || true)"
 complete_setup_rc=1
 if acquire_lock; then

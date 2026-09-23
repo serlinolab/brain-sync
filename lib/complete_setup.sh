@@ -121,25 +121,25 @@ _team_hooks_match(){
 # beyond the clone itself (no sparse-checkout, no hooks) - sync_mirror's own protect_readonly
 # is what guards it, re-applied every cycle regardless of this check.
 mirror_is_ready(){
-  local mirror="${1:-$ROOT/serlinolab}"
+  local mirror="${1:-$ROOT/Serlinolab_Brain}"
   [ -L "$mirror" ] && return 1
   [ -d "$mirror/.git" ] || return 1
   remote_matches "$mirror" "$EXPECTED_MIRROR_REMOTE"
 }
 
-# Finishes team/ and serlinolab/ against $ROOT/.state (STATE) - both must already be set by the
+# Finishes team/ and Serlinolab_Brain/ against $ROOT/.state (STATE) - both must already be set by the
 # caller (setup.sh sets them directly; lib/common.sh sets them for the sync engine).
 #
 # Returns: 0 fully complete (freshly finished this call, or already was - a no-op that changes
 #            nothing on disk and clones nothing);
 #          1 pending (a clone could not connect yet, e.g. the deploy key is not registered -
 #            retry silently on the next call, nothing else in the caller should be blocked);
-#          2 refused (an existing team/ or serlinolab/ has a foreign origin - never adopted,
+#          2 refused (an existing team/ or Serlinolab_Brain/ has a foreign origin - never adopted,
 #            never cloned over; the caller's own attention-marker logic already surfaces this);
 #          3 the team clone itself succeeded but configuring it failed - the half-configured
 #            clone is removed, never left half-configured on disk.
 complete_setup() {
-  local team="$ROOT/team" mirror="$ROOT/serlinolab"
+  local team="$ROOT/team" mirror="$ROOT/Serlinolab_Brain"
   local team_ready=0 team_needs_checkout=0
 
   # MAX-1515 review, "also check": a dangling symlink at team/ is `-e` false but `-L` true - an

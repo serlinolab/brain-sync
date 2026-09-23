@@ -4,7 +4,7 @@
 # by setup.sh outside the engine clone it manages, and self-contained (no
 # `source` of engine files) so a broken update can't take down the rollback.
 set -u
-ROOT="${BRAIN_ROOT:-$HOME/Serlino}"
+ROOT="${BRAIN_ROOT:-$HOME/Serlinolab}"
 STATE="$ROOT/.state"; ENGINE="$STATE/engine"; LOG="$STATE/sync.log"
 REMOTE="${BRAIN_SYNC_REMOTE:-https://github.com/serlinolab/brain-sync.git}"
 mkdir -p "$STATE"

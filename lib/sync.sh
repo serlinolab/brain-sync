@@ -268,7 +268,7 @@ update_attention_marker(){
     if [ -n "$started" ]; then
       elapsed_h=$(( ($(date +%s) - started) / 3600 ))
       if [ "$elapsed_h" -ge "$SETUP_PENDING_ALERT_HOURS" ]; then
-        printf 'Your Serlino folders are not ready yet.\nMax may still need to approve this Mac.\nNothing is lost.\nPlease tell Max.\n' > "$MARK"
+        printf 'Your Serlinolab folders are not ready yet.\nMax may still need to approve this Mac.\nNothing is lost.\nPlease tell Max.\n' > "$MARK"
         return
       fi
     fi

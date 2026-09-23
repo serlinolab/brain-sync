@@ -17,9 +17,9 @@ appear on their own within a few minutes of his approval.
 
 ## What you'll see
 
-A folder called `Serlino` in your home folder, with:
+A folder called `Serlinolab` in your home folder, with:
 
-- **serlinolab/** — the Serlino brain, kept current on its own. Open the
+- **Serlinolab_Brain/** — the Serlino brain, kept current on its own. Open the
   Code tab here to work — this is where its rules apply.
 - **team/** — notes shared with the whole team. Save something here and
   everyone else sees it within a few minutes. What they save, you see too.
@@ -27,7 +27,17 @@ A folder called `Serlino` in your home folder, with:
   to get you started (`brands`, `ideas`, `finds`).
 - **what-changed.md** — a running list of recent changes in the Serlino brain.
 
+From the Brain, Claude also reads what's in your `team/` and `personal/`
+folders — you work in one place, and it sees all three.
+
 You never type a command or approve anything after setup.
+
+## Sharing a skill
+
+A skill is just an instruction — saving one in `team/` never switches it on
+by itself. If you've written one you think everyone should use, save it in
+`team/` and tell Max. He looks it over and, if it's good, adds it to the
+Serlino brain so it applies for everyone.
 
 ## Connect MediaBuy (once)
 
