@@ -124,12 +124,41 @@ TEAM="$ROOT/team"
 echo "Setting up the team folder and the company mirror..."
 # shellcheck source=lib/complete_setup.sh
 source "$ENGINE/lib/complete_setup.sh" || { echo "Sync engine is missing lib/complete_setup.sh." >&2; exit 1; }
-complete_setup
-case $? in
+# MAX-1515 review finding A: a background sync cycle (lib/sync.sh) calls complete_setup too,
+# holding this same lock for its whole run. Without taking it here as well, this run and a
+# background cycle could execute complete_setup at the same moment - the failed-clone cleanup
+# that follows a lost race would then delete whichever side actually finished (see
+# lib/complete_setup.sh's own defence for the deeper story). Taking the one lock every caller
+# shares makes that structurally impossible instead of merely unlikely.
+# shellcheck source=lib/common.sh
+source "$ENGINE/lib/common.sh" || { echo "Sync engine is missing lib/common.sh." >&2; exit 1; }
+# common.sh re-derives ROOT from $BRAIN_ROOT (a sync-cycle override this script never accepts -
+# setup.sh's folder is always $HOME/Serlino) and STATE/TEAM/PERSON_SLUG from that, which would
+# silently point acquire_lock's own lock, and complete_setup's own targets, at the wrong place
+# (and re-derive the wrong person) whenever $BRAIN_ROOT happens to be set in the environment
+# for something else entirely. Restore this script's own values immediately - the ONE thing
+# this source is for is acquire_lock/cleanup_lock.
+ROOT="$HOME/Serlino"; STATE="$ROOT/.state"; LOCK="$STATE/run.lock"; TEAM="$ROOT/team"
+PERSON_SLUG="$(cat "$STATE/person" 2>/dev/null || true)"
+complete_setup_rc=1
+if acquire_lock; then
+  complete_setup; complete_setup_rc=$?
+  cleanup_lock
+else
+  echo "Setup is already being completed in the background - waiting briefly for it to finish..." >&2
+  sleep 2
+  if acquire_lock; then
+    complete_setup; complete_setup_rc=$?
+    cleanup_lock
+  else
+    echo "Setup is still being completed in the background. Nothing more to do here right now." >&2
+  fi
+fi
+case $complete_setup_rc in
   0) : ;;   # fully done this run (or already was)
-  1) setup_ok=0 ;;   # a clone could not connect yet (key not registered) - fall through to
-                      # the background-job install below; complete_setup's own message was
-                      # already printed
+  1) setup_ok=0 ;;   # a clone could not connect yet (key not registered), or the lock was held
+                      # by a concurrent run - fall through to the background-job install below;
+                      # any message from complete_setup itself was already printed
   2)
     # MAX-1515 fix 4a: exit immediately - never fall through to the launchd install below
     # against a folder this run just refused to touch. complete_setup already printed the
@@ -137,13 +166,14 @@ case $? in
     exit 1
     ;;
   3)
-    # Never install the background job against a run where the team folder configuration
-    # itself failed - complete_setup already removed the half-configured clone and printed
-    # its own "pending" message.
+    # MAX-1515 review finding E: this is a configuration failure, not a missing-key "pending"
+    # state - nothing here will retry it on its own, so the message must say so plainly instead
+    # of implying the folders will still appear by themselves. Never install the background job
+    # against a run where the team folder configuration itself failed - complete_setup already
+    # removed the half-configured clone.
     setup_ok=0
     rm -f "$DONE_MARK"
-    echo "Send Max the line starting SERLINO-BRAIN-SETUP. That's all - your folders appear on their own within a few minutes of his approval." >&2
-    echo "SERLINO-BRAIN-SETUP person=$PERSON_SLUG machine=$(hostname -s) mirror_key=$(cat "$MIRROR_KEY.pub" 2>/dev/null || true) team_key=$(cat "$TEAM_KEY.pub" 2>/dev/null || true)"
+    echo "Setup could not finish preparing the team folder. Nothing was lost. Please tell Max." >&2
     exit 1
     ;;
 esac
