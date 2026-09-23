@@ -6,6 +6,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
 source "$DIR/lib/secretscan.sh"
 source "$DIR/lib/team_layout.sh"
+source "$DIR/lib/complete_setup.sh"
 source "$DIR/lib/sync.sh"
 
 # Self-update's smoke test: proves this copy sources cleanly and can run,
@@ -15,6 +16,12 @@ source "$DIR/lib/sync.sh"
 if [ "${BRAIN_SYNC_LOCK_HELD:-0}" != 1 ]; then acquire_lock || exit 0; fi
 [ -n "${SYNC_HOLD_SECONDS:-}" ] && sleep "$SYNC_HOLD_SECONDS"
 person_warn
+# MAX-1515 change A: finish a pending setup (the deploy key may just have been registered)
+# before doing anything else this cycle. Cheap once done - $STATE/setup-complete short-
+# circuits every later call, so a finished Mac's cycles never touch team/ or serlinolab/ here.
+# A still-pending result is never fatal to the rest of the cycle: whatever already exists on
+# disk is synced below exactly as it is today.
+[ -f "$STATE/setup-complete" ] || complete_setup || true
 commit_local
 commit_rc=$?
 if [ "$commit_rc" -eq 1 ]; then

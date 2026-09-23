@@ -208,6 +208,20 @@ update_attention_marker(){
       return
     fi
   fi
+  # MAX-1515 change A: setup itself (the team clone + its configuration, and the mirror clone -
+  # see lib/complete_setup.sh) can sit pending for a while waiting on a deploy key Max has not
+  # registered yet. Plain words, no git vocabulary - this can fire before team/ even exists.
+  if [ ! -f "$STATE/setup-complete" ]; then
+    local started elapsed_h
+    started=$(cat "$STATE/setup-started" 2>/dev/null || true)
+    if [ -n "$started" ]; then
+      elapsed_h=$(( ($(date +%s) - started) / 3600 ))
+      if [ "$elapsed_h" -ge "$SETUP_PENDING_ALERT_HOURS" ]; then
+        printf 'Your Serlino folders are not ready yet.\nMax may still need to approve this Mac.\nNothing is lost.\nPlease tell Max.\n' > "$MARK"
+        return
+      fi
+    fi
+  fi
   rm -f "$MARK"
 }
 
