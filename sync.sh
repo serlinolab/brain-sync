@@ -4,6 +4,8 @@
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib/common.sh"
+source "$DIR/lib/secretscan.sh"
+source "$DIR/lib/team_layout.sh"
 source "$DIR/lib/sync.sh"
 
 # Self-update's smoke test: proves this copy sources cleanly and can run,
@@ -28,7 +30,7 @@ if ! online; then
 fi
 sync_mirror
 cycle_rc=$?
-sync_personal || cycle_rc=$?
+sync_team || cycle_rc=$?
 what_changed
 update_attention_marker
 exit "$cycle_rc"

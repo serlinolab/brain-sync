@@ -2,7 +2,7 @@
 # AC-6 - staleness must come from unsynced local work, checked before the
 # network step, never from time-since-last-successful-cycle.
 load 'helpers'
-setup() { brain_test_setup; make_fake_personal_repo; }
+setup() { brain_test_setup; make_fake_team_repo; }
 teardown() { brain_test_teardown; }
 
 @test "the attention marker appears when local work is unpushed and the network is down" {
@@ -17,10 +17,10 @@ teardown() { brain_test_teardown; }
 }
 
 @test "a backdated commit crosses the production threshold" {
-  echo old > "$PERSONAL/old.txt"
-  git -C "$PERSONAL" add old.txt
+  echo old > "$TEAM/old.txt"
+  git -C "$TEAM" add old.txt
   GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:00:00Z' \
-    git -C "$PERSONAL" -c user.name=fixture -c user.email=fixture@example.com commit -q -m old
+    git -C "$TEAM" -c user.name=fixture -c user.email=fixture@example.com commit -q -m old
   STALE_HOURS=4 run bash "$REPO_ROOT/sync.sh"
   [ -f "$MARK" ]
 }
