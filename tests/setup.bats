@@ -16,6 +16,9 @@ setup_setup_test() {
   cp "$REPO_ROOT/lib/secretscan.sh" "$work/lib/secretscan.sh"
   cp "$REPO_ROOT/lib/team_layout.sh" "$work/lib/team_layout.sh"
   cp "$REPO_ROOT/lib/complete_setup.sh" "$work/lib/complete_setup.sh"
+  # MAX-1515 review finding A: setup.sh now sources $ENGINE/lib/common.sh too, to take the
+  # same lock a background sync cycle holds around its own complete_setup call.
+  cp "$REPO_ROOT/lib/common.sh" "$work/lib/common.sh"
   cp -r "$REPO_ROOT/templates/." "$work/templates/"
   git -C "$work" add -A; git -C "$work" -c user.name=fixture -c user.email=fixture@example.com commit -qm engine
   git -C "$work" remote add origin "$BRAIN_ROOT/repos/engine.git"; git -C "$work" push -q origin main
@@ -277,7 +280,7 @@ push_colleague_instructions_to_team_origin() {
   [ ! -e "$HOME/Serlino/team/.claude" ]
 }
 
-@test "a failed team clone configuration leaves no team clone at all, and setup reports pending" {
+@test "a failed team clone configuration leaves no team clone at all, and setup reports the failure plainly" {
   push_colleague_instructions_to_team_origin
   FAIL_SPARSE=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
@@ -286,6 +289,140 @@ push_colleague_instructions_to_team_origin() {
   [ ! -e "$HOME/Serlino/.state/setup-complete" ]
   # a half-configured team/ must never leave the background job installed
   [ ! -e "$HOME/Library/LaunchAgents/com.serlinolab.brainsync.plist" ]
+  # MAX-1515 review finding E: a configuration failure is not a missing-key "pending" state -
+  # nothing here retries it on its own, so the message must say so plainly instead of implying
+  # (as it used to) that the folders will still appear by themselves.
+  [[ "$output" == *"Setup could not finish preparing the team folder. Nothing was lost. Please tell Max."* ]] || false
+  [[ "$output" != *"appear on their own"* ]] || false
+}
+
+# --- MAX-1515 review remediation ---
+
+# Finding B: $STATE/team-configured used to be trusted as proof team/ was protected - a marker
+# written once and never re-checked against reality. An ordinary replacement clone (no sparse-
+# checkout, no hooks) at the same path, with the marker still sitting there from before, used
+# to sail through untouched forever. team_is_protected (lib/complete_setup.sh) re-derives the
+# real state instead, so the next cycle must reconfigure it for real.
+@test "a stale team-configured marker does not protect a replacement clone - the next cycle reconfigures it for real" {
+  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -eq 0 ]
+  local marker_before; marker_before=$(cat "$HOME/Serlino/.state/team-configured")
+
+  push_colleague_instructions_to_team_origin
+  rm -rf "$HOME/Serlino/team"
+  # an ORDINARY clone - no sparse-checkout, no hooks, no core.symlinks=false - simulating a
+  # replacement that never went through complete_setup at all
+  "$REAL_GIT" clone -q "$BRAIN_ROOT/repos/team.git" "$HOME/Serlino/team"
+  # the stale marker survives the replacement untouched, exactly as the finding describes
+  [ "$(cat "$HOME/Serlino/.state/team-configured")" = "$marker_before" ]
+  # proof the replacement is genuinely unprotected: an ordinary clone checked out everything,
+  # including the colleague's instructions a sparse-checkout would have excluded
+  [ -f "$HOME/Serlino/team/CLAUDE.md" ]
+
+  BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+
+  [ -x "$HOME/Serlino/team/.git/hooks/pre-commit" ]
+  [ -x "$HOME/Serlino/team/.git/hooks/pre-push" ]
+  [ "$(git -C "$HOME/Serlino/team" config core.hooksPath)" = "$HOME/Serlino/team/.git/hooks" ]
+  [ "$(git -C "$HOME/Serlino/team" config core.symlinks)" = false ]
+  # the sparse-checkout reapply that reconfiguration performs removes what should never have
+  # been checked out in the first place
+  [ ! -e "$HOME/Serlino/team/CLAUDE.md" ]
+}
+
+# Finding C: sync.sh used to discard a configuration failure (`complete_setup || true`) and let
+# commit_local/sync_team run anyway against whatever was left on disk. Reproduces the case that
+# actually matters: team/ already exists at the expected origin (adopted, not freshly cloned by
+# this run) but was never actually configured - complete_setup's own cleanup only removes what
+# ITS OWN clone created, so this half-adopted state survives a failed reconfiguration attempt,
+# and the cycle must skip it rather than fetch/rebase a colleague's push straight onto disk.
+@test "a discarded configuration failure never lets sync.sh commit or rebase into an unprotected team/" {
+  # an ordinary, unconfigured clone of the (still colleague-instruction-free) team origin -
+  # simulates one that never went through complete_setup, adopted on the next cycle below
+  "$REAL_GIT" clone -q "$BRAIN_ROOT/repos/team.git" "$HOME/Serlino/team"
+  local before; before=$(git -C "$HOME/Serlino/team" rev-parse HEAD)
+
+  push_colleague_instructions_to_team_origin
+
+  FAIL_SPARSE=1 BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+
+  # never deleted - this run adopted it rather than cloning it itself
+  [ -d "$HOME/Serlino/team/.git" ]
+  # never fetched/rebased - the colleague's push never reached the local working tree
+  [ "$(git -C "$HOME/Serlino/team" rev-parse HEAD)" = "$before" ]
+  [ ! -e "$HOME/Serlino/team/CLAUDE.md" ]
+  [ ! -e "$HOME/Serlino/team/.claude" ]
+  grep -q "skipping this cycle" "$HOME/Serlino/.state/sync.log"
+}
+
+# Finding A: setup.sh and a background sync cycle both call complete_setup. Before this fix,
+# only sync.sh took the lock - the two could run complete_setup at the same moment, and the
+# loser's failed-clone cleanup (an unconditional rm -rf) could delete whichever side actually
+# finished. setup.sh now takes the same lock, so the two can never be inside complete_setup
+# together in the first place.
+@test "setup.sh never runs complete_setup while a background cycle holds the lock" {
+  # Pre-seed the layout/person state a first setup.sh run would have written, so this test's
+  # OWN concurrent processes race only on the lock - not on setup.sh's unrelated AC-8 "not
+  # made by this setup" guard, which would otherwise fire the instant the background cycle's
+  # own `mkdir -p $STATE` (lib/common.sh) creates $ROOT first.
+  mkdir -p "$HOME/Serlino/.state"
+  printf 'parker-v2\n' > "$HOME/Serlino/.state/layout"
+  printf 'alice\n' > "$HOME/Serlino/.state/person"
+
+  # A short hold: long enough that setup.sh's own first attempt below reliably lands inside
+  # it (acquire_lock is the very first thing either side does), short enough that its retry
+  # (a fixed 2s wait) reliably lands after it - the spec allows setup.sh to either finish this
+  # run or report still-busy, so keeping the hold well under that 2s margin is what makes the
+  # collision itself deterministic rather than the specific outcome this run reports.
+  BRAIN_ROOT="$HOME/Serlino" SYNC_HOLD_SECONDS=0.5 bash "$REPO_ROOT/sync.sh" &
+  local holder=$!
+  sleep 0.15   # let the background cycle actually acquire the lock first
+  [ -d "$HOME/Serlino/.state/run.lock" ]
+
+  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  wait "$holder"
+
+  # the collision was detected and never raced into complete_setup together - whichever side
+  # actually finished configuring it, team/ ends up pointed at the real origin, never a
+  # corrupted half-clone from two attempts stepping on each other
+  [[ "$output" == *"already being completed in the background"* ]] || false
+  [ -d "$HOME/Serlino/team/.git" ]
+  [ "$(git -C "$HOME/Serlino/team" remote get-url origin)" = 'git@brain-team:serlinolab/brain-team.git' ]
+}
+
+# Finding A: a concurrent winner's clone must survive a losing attempt's own failed-clone
+# cleanup. Reproduced deterministically (real concurrency races on timing) by making the ONE
+# `git clone` call this attempt makes stand in for "another process finished first": the
+# wrapper performs a real clone as a side effect, exactly what a concurrent winner would have
+# left behind, then reports failure for THIS call, exactly what the loser of a real race sees.
+@test "a losing clone attempt's own cleanup never deletes a clone that is genuinely there now" {
+  # Simulates the race deterministically instead of depending on real timing: this attempt's
+  # OWN `git clone` call performs a real clone (through the same alias-rewriting wrapper every
+  # other command in this fixture uses - exactly what a concurrent winner would have left
+  # behind) and then reports failure for the CALLER, exactly what the loser of a real race
+  # sees when it tries to clone into a destination another process just finished.
+  local fakebin; fakebin="$(mktemp -d)"
+  cat > "$fakebin/git" <<EOF
+#!/bin/bash
+if [ "\$1" = clone ]; then
+  "$HOME/bin/git" "\$@"
+  exit 1
+fi
+exec "$HOME/bin/git" "\$@"
+EOF
+  chmod +x "$fakebin/git"
+
+  mkdir -p "$HOME/Serlino/.state"
+  printf 'parker-v2\n' > "$HOME/Serlino/.state/layout"
+  printf 'testperson\n' > "$HOME/Serlino/.state/person"
+  PATH="$fakebin:$HOME/bin:$PATH" BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+
+  [ "$status" -eq 0 ]
+  [ -d "$HOME/Serlino/team/.git" ]
+  [ "$(cd "$HOME/Serlino/team" && git remote get-url origin)" = 'git@brain-team:serlinolab/brain-team.git' ]
+  [[ "$output" == *"already completed elsewhere"* ]] || false
 }
 
 @test "setup never overwrites an existing personal README" {
