@@ -15,6 +15,7 @@ setup_setup_test() {
   cp "$REPO_ROOT/lib/launcher.sh" "$work/lib/launcher.sh"
   cp "$REPO_ROOT/lib/secretscan.sh" "$work/lib/secretscan.sh"
   cp "$REPO_ROOT/lib/team_layout.sh" "$work/lib/team_layout.sh"
+  cp "$REPO_ROOT/lib/complete_setup.sh" "$work/lib/complete_setup.sh"
   cp -r "$REPO_ROOT/templates/." "$work/templates/"
   git -C "$work" add -A; git -C "$work" -c user.name=fixture -c user.email=fixture@example.com commit -qm engine
   git -C "$work" remote add origin "$BRAIN_ROOT/repos/engine.git"; git -C "$work" push -q origin main
@@ -50,6 +51,7 @@ for i in "\${!args[@]}"; do
   esac
 done
 if [ "\${FAIL_MIRROR:-0}" = 1 ] && [[ " \$* " == *" git@brain-mirror:serlinolab/Serlinolab-Brain.git "* ]]; then exit 1; fi
+if [ "\${FAIL_TEAM:-0}" = 1 ] && [[ " \$* " == *" git@brain-team:serlinolab/brain-team.git "* ]]; then exit 1; fi
 if [ "\${FAIL_SPARSE:-0}" = 1 ] && [[ " \$* " == *" sparse-checkout "* ]]; then exit 1; fi
 "\$REAL_GIT" "\${args[@]}" | sed -e "s#$repos_dir/mirror.git#git@brain-mirror:serlinolab/Serlinolab-Brain.git#g" -e "s#$repos_dir/team.git#git@brain-team:serlinolab/brain-team.git#g"
 exit "\${PIPESTATUS[0]}"
@@ -320,4 +322,119 @@ push_colleague_instructions_to_team_origin() {
   [ "$status" -eq 0 ]
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -eq 0 ]
+}
+
+# --- MAX-1515 change A: setup finishes itself in the background, no second Terminal paste ---
+
+# (a)
+@test "first run with keys refused: reports pending, the plist is still written, setup-started is recorded, nothing is cloned" {
+  FAIL_TEAM=1 FAIL_MIRROR=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *pending* ]] || false
+  [ -f "$HOME/Library/LaunchAgents/com.serlinolab.brainsync.plist" ]
+  [ -f "$HOME/Serlino/.state/setup-started" ]
+  [ ! -e "$HOME/Serlino/team" ]
+  [ ! -e "$HOME/Serlino/serlinolab" ]
+}
+
+# (b)
+@test "a later sync cycle completes setup once the keys are simulated as registered, with no user action" {
+  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  [ ! -e "$HOME/Serlino/team" ]
+  [ ! -e "$HOME/Serlino/serlinolab" ]
+
+  push_colleague_instructions_to_team_origin
+
+  # the key is now "registered" - the fake git wrapper no longer fails the team clone
+  BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+  [ -d "$HOME/Serlino/team/.git" ]
+  [ -d "$HOME/Serlino/serlinolab/.git" ]
+  [ -x "$HOME/Serlino/team/.git/hooks/pre-commit" ]
+  [ -x "$HOME/Serlino/team/.git/hooks/pre-push" ]
+  [ "$(git -C "$HOME/Serlino/team" config core.hooksPath)" = "$HOME/Serlino/team/.git/hooks" ]
+  [ "$(git -C "$HOME/Serlino/team" config core.symlinks)" = false ]
+  [ -f "$HOME/Serlino/.state/team-configured" ]
+  [ -f "$HOME/Serlino/.state/setup-complete" ]
+  [ ! -e "$HOME/Serlino/team/CLAUDE.md" ]
+  [ ! -e "$HOME/Serlino/team/.claude" ]
+}
+
+# (c)
+@test "a completed setup is left untouched by later cycles - no reclone, no config or hook drift" {
+  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -eq 0 ]
+  local before_config before_precommit before_prepush before_team_inode before_mirror_inode
+  before_config=$(git -C "$HOME/Serlino/team" config --list)
+  before_precommit=$(shasum "$HOME/Serlino/team/.git/hooks/pre-commit")
+  before_prepush=$(shasum "$HOME/Serlino/team/.git/hooks/pre-push")
+  before_team_inode=$(stat -f %i "$HOME/Serlino/team/.git")
+  before_mirror_inode=$(stat -f %i "$HOME/Serlino/serlinolab/.git")
+
+  BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+  BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+
+  [ "$(git -C "$HOME/Serlino/team" config --list)" = "$before_config" ]
+  [ "$(shasum "$HOME/Serlino/team/.git/hooks/pre-commit")" = "$before_precommit" ]
+  [ "$(shasum "$HOME/Serlino/team/.git/hooks/pre-push")" = "$before_prepush" ]
+  # an inode unchanged across two cycles proves complete_setup never re-cloned - a clone would
+  # recreate .git under a fresh inode
+  [ "$(stat -f %i "$HOME/Serlino/team/.git")" = "$before_team_inode" ]
+  [ "$(stat -f %i "$HOME/Serlino/serlinolab/.git")" = "$before_mirror_inode" ]
+}
+
+# (d)
+@test "still pending past SETUP_PENDING_ALERT_HOURS raises the attention file in plain words, cleared once complete" {
+  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+
+  SETUP_PENDING_ALERT_HOURS=0 FAIL_TEAM=1 BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$HOME/Serlino/SOMETHING NEEDS YOUR ATTENTION.txt" ]
+  grep -qi "not ready yet" "$HOME/Serlino/SOMETHING NEEDS YOUR ATTENTION.txt"
+  run grep -inE '\b(git|repo|repository|commit|push|pull|branch|clone|merge|PR|key|SSH)\b' "$HOME/Serlino/SOMETHING NEEDS YOUR ATTENTION.txt"
+  [ "$status" -ne 0 ]
+
+  BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/Serlino/SOMETHING NEEDS YOUR ATTENTION.txt" ]
+}
+
+# (e)
+@test "personal/ is never touched by a pending or a completing background setup cycle" {
+  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  mkdir -p "$HOME/Serlino/personal/ideas"
+  echo "my plan" > "$HOME/Serlino/personal/ideas/plan.txt"
+  local before_mtime
+  before_mtime=$(stat -f %m "$HOME/Serlino/personal/ideas/plan.txt")
+
+  FAIL_TEAM=1 BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+  BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -eq 0 ]
+
+  [ "$(cat "$HOME/Serlino/personal/ideas/plan.txt")" = "my plan" ]
+  [ "$(stat -f %m "$HOME/Serlino/personal/ideas/plan.txt")" = "$before_mtime" ]
+  [ ! -d "$HOME/Serlino/personal/.git" ]
+  [ ! -d "$HOME/Serlino/personal/ideas/.git" ]
+}
+
+# (f)
+@test "a background cycle facing a foreign team origin never adopts it, and raises the attention marker" {
+  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  [ ! -e "$HOME/Serlino/team" ]
+  git init -q "$HOME/Serlino/team"
+  git -C "$HOME/Serlino/team" remote add origin https://unrelated.example/team.git
+
+  BRAIN_ROOT="$HOME/Serlino" run bash "$REPO_ROOT/sync.sh"
+  [ "$status" -ne 0 ]
+  [ "$(git -C "$HOME/Serlino/team" remote get-url origin)" = "https://unrelated.example/team.git" ]
+  [ ! -f "$HOME/Serlino/.state/team-configured" ]
+  [ -f "$HOME/Serlino/SOMETHING NEEDS YOUR ATTENTION.txt" ]
+  grep -qi "not connected to where it should be" "$HOME/Serlino/SOMETHING NEEDS YOUR ATTENTION.txt"
 }

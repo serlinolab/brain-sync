@@ -42,7 +42,19 @@ seed_repo() {
 
 # MAX-1515 (amended): the two-way repo is $TEAM (team/); the read-only mirror is $ROOT/serlinolab,
 # beside team/, not nested inside it. make_fake_team_repo replaces make_fake_personal_repo.
-make_fake_team_repo() { seed_repo "$BRAIN_ROOT/origin-team.git" "$TEAM" note.txt; }
+#
+# MAX-1515 change A: this fixture models a Mac whose team/ is already fully set up - it never
+# ran setup.sh, so it never installed hooks pointing at a real $STATE/engine/lib. Marking it
+# $STATE/team-configured up front (exactly what complete_setup itself writes once it has
+# actually done that work - lib/complete_setup.sh) makes complete_setup treat it as already
+# done and skip straight past the configure step, the same way a real already-set-up Mac's
+# sync cycles do. Without this, every sync cycle in every test using this fixture would run
+# complete_setup's configure step against a $STATE/engine/lib that was never cloned, installing
+# hooks that immediately refuse every commit.
+make_fake_team_repo() {
+  seed_repo "$BRAIN_ROOT/origin-team.git" "$TEAM" note.txt
+  date -u +%FT%TZ > "$STATE/team-configured"
+}
 make_fake_mirror() { mkdir -p "$ROOT"; seed_repo "$BRAIN_ROOT/origin-mirror.git" "$MIRROR" sub/file.txt; ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git"; export ONLINE_CHECK_REMOTE; run_sync_cycle; }
 make_local_ahead_change() { echo 'unsent note' >> "$TEAM/note.txt"; }
 run_sync_cycle() { bash "$REPO_ROOT/sync.sh"; }
