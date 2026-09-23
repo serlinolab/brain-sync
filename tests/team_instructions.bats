@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # AC-4 - nothing in team/ can contribute instructions to a Claude session, whether it
 # arrived from a colleague's push or was typed directly on this Mac. MAX-1515 (amended):
-# serlinolab/ moved beside team/, not nested inside it, so the ONE remaining layer is the
+# Serlinolab_Brain/ moved beside team/, not nested inside it, so the ONE remaining layer is the
 # static, non-cone sparse-checkout on the team clone (lib/team_layout.sh) - there is no
 # runtime quarantine sweep to fall back on, so this file leans on real sync cycles.
 load 'helpers'

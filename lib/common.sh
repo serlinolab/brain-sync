@@ -1,11 +1,11 @@
 #!/bin/bash
 # shellcheck disable=SC2034  # a constants file: every name here is used by a sibling, not locally
 # Shared paths, constants, logging and the lock. Sourced by sync.sh and
-# tests (override BRAIN_ROOT in tests instead of the real $HOME/Serlino).
-ROOT="${BRAIN_ROOT:-$HOME/Serlino}"
+# tests (override BRAIN_ROOT in tests instead of the real $HOME/Serlinolab).
+ROOT="${BRAIN_ROOT:-$HOME/Serlinolab}"
 STATE="$ROOT/.state"
 TEAM="$ROOT/team"                 # MAX-1515: two-way, everyone writes
-MIRROR="$ROOT/serlinolab"         # MAX-1515 (amended): beside team/, not nested inside it, read-only
+MIRROR="$ROOT/Serlinolab_Brain"   # MAX-1515 (amended): beside team/, not nested inside it, read-only
 PERSONAL="$ROOT/personal"         # MAX-1515: plain folders, no git, engine never touches this
 LOG="$STATE/sync.log"
 MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"

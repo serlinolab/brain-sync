@@ -4,7 +4,7 @@ brain_test_setup() {
   BRAIN_ROOT="$(mktemp -d)"; export BRAIN_ROOT
   HOME="$(mktemp -d)"; export HOME
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/no-such-remote"; export ONLINE_CHECK_REMOTE
-  ROOT="$BRAIN_ROOT"; STATE="$ROOT/.state"; TEAM="$ROOT/team"; MIRROR="$ROOT/serlinolab"
+  ROOT="$BRAIN_ROOT"; STATE="$ROOT/.state"; TEAM="$ROOT/team"; MIRROR="$ROOT/Serlinolab_Brain"
   PERSONAL="$ROOT/personal"; MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
   LOCK="$STATE/run.lock"; LOG="$STATE/sync.log"; CONFLICT_STATE="$STATE/conflict_attempts"
   CONFLICTS="$STATE/conflicts"; QUARANTINE="$STATE/quarantine"
@@ -40,7 +40,7 @@ seed_repo() {
   mkdir -p "$(dirname "$dest")"; git clone -q "$origin" "$dest"; rm -rf "$tmp"
 }
 
-# MAX-1515 (amended): the two-way repo is $TEAM (team/); the read-only mirror is $ROOT/serlinolab,
+# MAX-1515 (amended): the two-way repo is $TEAM (team/); the read-only mirror is $ROOT/Serlinolab_Brain,
 # beside team/, not nested inside it. make_fake_team_repo replaces make_fake_personal_repo.
 #
 # MAX-1515 review finding D: a marker written up front (without doing the configuration it

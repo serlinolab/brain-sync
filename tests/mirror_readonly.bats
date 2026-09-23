@@ -24,12 +24,12 @@ teardown() { brain_test_teardown; }
   # branch is missing, the whole company folder is left writable, and whatever the creator
   # then writes into it dies in the next successful reset --hard.
   local root; root="$(mktemp -d)"
-  seed_repo "$root/origin.git" "$root/serlinolab" sub/file.txt
+  seed_repo "$root/origin.git" "$root/Serlinolab_Brain" sub/file.txt
   rm -rf "$root/origin.git"   # the origin URL is untouched (still matches EXPECTED below) - only the remote itself is gone, so this is a fetch failure, not an origin mismatch
-  BRAIN_ROOT="$root" MIRROR="$root/serlinolab" EXPECTED_MIRROR_REMOTE="$root/origin.git" run bash -c \
-    "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; MIRROR='$root/serlinolab'; sync_mirror"
+  BRAIN_ROOT="$root" MIRROR="$root/Serlinolab_Brain" EXPECTED_MIRROR_REMOTE="$root/origin.git" run bash -c \
+    "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; MIRROR='$root/Serlinolab_Brain'; sync_mirror"
   local fetch_status=$status
-  run bash -c "echo hi > '$root/serlinolab/sub/file.txt'"
+  run bash -c "echo hi > '$root/Serlinolab_Brain/sub/file.txt'"
   local write_status=$status
   chmod -R u+w "$root" 2>/dev/null || true
   rm -rf "$root"

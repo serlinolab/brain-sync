@@ -1,6 +1,6 @@
 #!/bin/bash
 # Single source of truth for the team/ sparse-checkout pattern (MAX-1515 review, Class A;
-# amended when serlinolab/ moved beside team/, no longer nested inside it).
+# amended when Serlinolab_Brain/ moved beside team/, no longer nested inside it).
 # Sourced by setup.sh (the real install) and tests/helpers.bash (test doubles), so the
 # patterns a test asserts against can never drift from what setup.sh actually installs.
 #

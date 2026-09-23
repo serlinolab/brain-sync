@@ -25,8 +25,8 @@
    installed by their first and only `setup.sh` run) calls `complete_setup`
    (`lib/complete_setup.sh`) every cycle; once the key is registered, the very next cycle
    clones and configures whatever is still missing, on its own, no Terminal paste required.
-   To check progress on their Mac: `tail ~/Serlino/.state/sync.log`, or look for
-   `~/Serlino/.state/setup-complete` (present once both `team/` and `serlinolab/` are done).
+   To check progress on their Mac: `tail ~/Serlinolab/.state/sync.log`, or look for
+   `~/Serlinolab/.state/setup-complete` (present once both `team/` and `Serlinolab_Brain/` are done).
    If it is still pending after `SETUP_PENDING_ALERT_HOURS` (default 24, set as an environment
    variable for the sync job - see `lib/common.sh`), the creator's Mac raises
    "SOMETHING NEEDS YOUR ATTENTION.txt" on its own to prompt them to check in with you.
@@ -63,6 +63,6 @@ being signed in, which it is not in the environment these tests run in
 (`tests/live_claude.bats` documents and skips this by default; set `BRAIN_LIVE_CLAUDE=1` to
 run it on a Mac that is signed in).
 
-To check by hand: open the Code tab on `~/Serlino/serlinolab` on a set-up Mac and ask the
-assistant to name the brand. It should answer using whatever is in
-`~/Serlino/serlinolab/CLAUDE.md`, without being told where to look.
+To check by hand: open the Code tab on `~/Serlinolab/Serlinolab_Brain` on a set-up Mac and ask
+the assistant to name the brand. It should answer using whatever is in
+`~/Serlinolab/Serlinolab_Brain/CLAUDE.md`, without being told where to look.
