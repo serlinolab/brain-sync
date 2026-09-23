@@ -87,10 +87,11 @@ teardown() { brain_test_teardown; }
   fakebin="$(mktemp -d)"; real_git="$(type -P git)"
   cat > "$fakebin/git" <<'SCRIPT'
 #!/bin/bash
-"$REAL_GIT" "$@"
+"$REAL_GIT" "$@"; rc=$?
 if [ "$1" = "-C" ] && [ "$3" = fetch ]; then
   if echo race > "$MIRROR/race.txt"; then touch "$BRAIN_ROOT/race-created"; fi
 fi
+exit "$rc"
 SCRIPT
   chmod +x "$fakebin/git"
   REAL_GIT="$real_git" PATH="$fakebin:$PATH" ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git" \

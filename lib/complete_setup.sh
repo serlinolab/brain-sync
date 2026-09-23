@@ -23,13 +23,25 @@ EXPECTED_TEAM_REMOTE="${EXPECTED_TEAM_REMOTE:-git@brain-team:serlinolab/brain-te
 EXPECTED_MIRROR_REMOTE="${EXPECTED_MIRROR_REMOTE:-git@brain-mirror:serlinolab/Serlinolab-Brain.git}"
 
 # Moved verbatim from setup.sh's own local copy.
+# MAX-1515 re-review, finding F4: same capture-and-check idiom as lib/sync.sh's
+# remote_matches_expected - a bare `while read < <(cmd)` hides cmd's own exit status (0 lines
+# of output looks identical to "every push URL matched"), so a failing enumeration (network
+# hiccup, corrupt config, exit 128) used to be silently read as a match. Kept as its own
+# function rather than reused from lib/sync.sh: that file is sometimes sourced standalone in
+# tests, without this one, and the two deliberately differ on a missing dir/.git - it is "not a
+# mismatch" there (every caller already guards it separately) but IS one here, which every
+# caller in this file relies on. Keep the two in step whenever either changes.
 remote_matches() {
-  local path="$1" expected="$2" url
+  local path="$1" expected="$2" url push_urls
   [ -d "$path/.git" ] || return 1
-  [ "$(git -C "$path" remote get-url origin 2>/dev/null || true)" = "$expected" ] || return 1
+  url=$(git -C "$path" remote get-url origin 2>/dev/null) || return 1
+  [ "$url" = "$expected" ] || return 1
+  push_urls=$(git -C "$path" remote get-url --push --all origin 2>/dev/null) || return 1
+  [ -n "$push_urls" ] || return 1
   while IFS= read -r url; do
     [ "$url" = "$expected" ] || return 1
-  done < <(git -C "$path" remote get-url --push --all origin 2>/dev/null)
+  done <<<"$push_urls"
+  return 0
 }
 
 # MAX-1515 review, finding B: verifies team/'s REAL protection state instead of trusting
@@ -55,7 +67,38 @@ team_is_protected(){
   [ "$(git -C "$team" config --bool core.symlinks 2>/dev/null)" = false ] || return 1
   [ -x "$team/.git/hooks/pre-commit" ] && [ -x "$team/.git/hooks/pre-push" ] || return 1
   _team_hooks_match "$team" || return 1
+  # MAX-1515 re-review, finding F1a: every check above proves the CONFIGURATION was written -
+  # it never proves it was actually APPLIED to the working tree. If `sparse-checkout reapply`
+  # (or the initial checkout) fails after the pattern file is written, every check above still
+  # passes while an instruction file sits on disk. Verify the real on-disk invariant directly,
+  # and that HEAD actually resolves (a --no-checkout clone whose checkout step never ran).
+  git -C "$team" rev-parse --verify -q HEAD >/dev/null 2>&1 || return 1
+  _team_forbidden_files_present "$team" && return 1
   return 0
+}
+
+# True if a TRACKED instruction path (any component named, case-insensitively, one of
+# TEAM_INSTRUCTION_NAMES) is not marked skip-worktree - i.e. sparse-checkout was not applied to
+# it and it was materialised from the shared repository. A file the person creates locally is
+# untracked, never staged (commit_local's excludes) and team/ is not a parent of the brain, so
+# it is deliberately not counted. A failed listing counts as present (fail closed).
+_team_forbidden_files_present(){
+  local team="$1" list entry tag path comp name found=1
+  list=$(mktemp) || return 0
+  if ! git -C "$team" ls-files -t -z > "$list" 2>/dev/null; then rm -f "$list"; return 0; fi
+  while [ "$found" -eq 1 ] && IFS= read -r -d '' entry; do
+    tag=${entry%% *}; path=${entry#* }
+    [ "$tag" = S ] && continue
+    local IFS_SAVE=$IFS; IFS=/
+    for comp in $path; do
+      for name in "${TEAM_INSTRUCTION_NAMES[@]}"; do
+        [ "$(printf '%s' "$comp" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" ] && found=0
+      done
+    done
+    IFS=$IFS_SAVE
+  done < "$list"
+  rm -f "$list"
+  return "$found"
 }
 
 # Generates the hook bodies complete_setup would install right now - same function
@@ -122,27 +165,33 @@ complete_setup() {
       return 2
     fi
   else
+    # MAX-1515 re-review, finding F3: mkdir is the ownership claim, atomic and exclusive - it
+    # fails outright if anything already exists at $team, a dangling symlink included. Only the
+    # attempt whose mkdir wins may ever remove $team again, and only while it is STILL exactly
+    # what mkdir left: empty. rmdir (never rm -rf) enforces that by construction below - it
+    # fails the instant anything has been written into it, whether that is a concurrent
+    # attempt's real clone of the SAME remote (the "already completed elsewhere" case) or a
+    # directory that has nothing to do with this protocol at all. Either way this attempt never
+    # owned that content and must never delete it.
+    local team_owned=0
+    if [ ! -L "$team" ] && mkdir "$team" 2>/dev/null; then
+      team_owned=1
+    fi
     # --no-checkout: nothing is written to the working tree by the clone itself. core.hooksPath
     # and core.symlinks are pinned at clone time (-c, in force before anything else runs) and
     # persisted below, so a permissive global hooksPath or a colleague's symlink never has a
     # window to matter. HEAD is checked out explicitly, last, only once every configuration
     # step below has succeeded - so a pre-existing committed CLAUDE.md/.claude never has a
-    # window to land on disk either.
-    if git clone --quiet --no-checkout -c core.hooksPath="$team/.git/hooks" -c core.symlinks=false \
+    # window to land on disk either. Cloning INTO the empty directory mkdir just created is
+    # ordinary git behaviour - git clone accepts an existing empty destination.
+    if [ "$team_owned" -eq 1 ] && git clone --quiet --no-checkout -c core.hooksPath="$team/.git/hooks" -c core.symlinks=false \
          "$EXPECTED_TEAM_REMOTE" "$team"; then
       team_ready=1
       team_needs_checkout=1
     else
-      # MAX-1515 review, finding A: setup.sh and a background sync cycle both call
-      # complete_setup, and until setup.sh also takes the lock (see setup.sh), the two could
-      # reach this exact point together - both saw $team absent, both attempted the clone, one
-      # lost. An unconditional rm -rf here deletes whichever side actually finished. Re-check
-      # right before deleting: only remove what is NOT a real, matching clone - never blow away
-      # one that is genuinely there now, however it got there.
+      [ "$team_owned" -eq 1 ] && rmdir "$team" 2>/dev/null
       if remote_matches "$team" "$EXPECTED_TEAM_REMOTE"; then
         echo "$team was already completed elsewhere; leaving it in place." >&2
-      else
-        rm -rf "$team"
       fi
       echo "Team folder clone pending - it will complete once Max has registered your key." >&2
       return 1
@@ -187,10 +236,19 @@ complete_setup() {
       return 2
     fi
   else
-    git clone --quiet "$EXPECTED_MIRROR_REMOTE" "$mirror" || {
+    # MAX-1515 re-review, finding F3: same ownership claim as the team clone above - mkdir
+    # first, clone into the empty directory it creates, and on failure remove only what this
+    # attempt's own mkdir created (rmdir, never rm -rf - it refuses the moment anything has
+    # been written into it).
+    local mirror_owned=0
+    if [ ! -L "$mirror" ] && mkdir "$mirror" 2>/dev/null; then
+      mirror_owned=1
+    fi
+    if ! { [ "$mirror_owned" -eq 1 ] && git clone --quiet "$EXPECTED_MIRROR_REMOTE" "$mirror"; }; then
+      [ "$mirror_owned" -eq 1 ] && rmdir "$mirror" 2>/dev/null
       echo "Mirror clone pending - it will complete once Max has registered your key." >&2
       return 1
-    }
+    fi
   fi
 
   date -u +%FT%TZ > "$STATE/setup-complete"

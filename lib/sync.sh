@@ -78,6 +78,17 @@ sync_mirror(){
 # file that looks like it holds a secret, before either is ever staged. Neither rejection
 # blocks the rest of the cycle - every other staged file still commits.
 commit_local(){
+  # MAX-1515 re-review, finding F1b: $setup_rc (set by sync.sh right before calling this,
+  # unset/0 for every caller that doesn't - e.g. a test sourcing this file standalone, which
+  # keeps today's behaviour) is complete_setup's own status THIS cycle, and it is authoritative
+  # over the team_is_protected re-check a few lines below: a 3 means THIS cycle's own
+  # reconfigure attempt wrote real config into team/ and then failed partway, exactly the state
+  # finding F1a closes a blind spot in. Checked first, never overridden by what that re-check
+  # says on its own.
+  if [ "${setup_rc:-0}" -eq 3 ]; then
+    log "team folder configuration failed this cycle (complete_setup exit 3); skipping this cycle's team folder operations"
+    return 2
+  fi
   # MAX-1515 review, "also check": same symlink gap as sync_mirror - `-d "$TEAM/.git"` follows
   # a symlink, so check `-L` first, before anything else runs.
   if [ -L "$TEAM" ]; then
@@ -164,6 +175,12 @@ save_conflict_copies(){
 }
 
 sync_team(){
+  # MAX-1515 re-review, finding F1b: same $setup_rc check as commit_local above, checked first
+  # for the same reason - see its comment there. No separate log line: commit_local already ran
+  # (and logged) earlier in the same cycle whenever this matters.
+  if [ "${setup_rc:-0}" -eq 3 ]; then
+    return 2
+  fi
   # MAX-1515 review, "also check": same symlink gap as commit_local/sync_mirror.
   if [ -L "$TEAM" ]; then
     log "the team folder is a symlink; refusing to touch it"
