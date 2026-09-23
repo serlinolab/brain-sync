@@ -43,16 +43,23 @@ seed_repo() {
 # MAX-1515 (amended): the two-way repo is $TEAM (team/); the read-only mirror is $ROOT/serlinolab,
 # beside team/, not nested inside it. make_fake_team_repo replaces make_fake_personal_repo.
 #
-# MAX-1515 change A: this fixture models a Mac whose team/ is already fully set up - it never
-# ran setup.sh, so it never installed hooks pointing at a real $STATE/engine/lib. Marking it
-# $STATE/team-configured up front (exactly what complete_setup itself writes once it has
-# actually done that work - lib/complete_setup.sh) makes complete_setup treat it as already
-# done and skip straight past the configure step, the same way a real already-set-up Mac's
-# sync cycles do. Without this, every sync cycle in every test using this fixture would run
-# complete_setup's configure step against a $STATE/engine/lib that was never cloned, installing
-# hooks that immediately refuse every commit.
+# MAX-1515 review finding D: a marker written up front (without doing the configuration it
+# claims) hid the exact bug finding B found - team_is_protected (lib/complete_setup.sh) is now
+# the real gate, so a fixture that only sets the marker would leave team_is_protected false and
+# every test using it would see its commits/pushes skipped. This calls the SAME configuration
+# steps complete_setup itself calls (through team_layout.sh / secretscan.sh, never a hand
+# rolled copy), against the SAME libdir convention ($STATE/engine/lib) team_is_protected checks
+# hooks against - seeded here with the one file those hooks actually source at runtime, so a
+# real commit through them still works. A test can no longer pass against a clone the
+# production code would itself refuse to trust.
 make_fake_team_repo() {
   seed_repo "$BRAIN_ROOT/origin-team.git" "$TEAM" note.txt
+  mkdir -p "$STATE/engine/lib"
+  cp "$REPO_ROOT/lib/secretscan.sh" "$STATE/engine/lib/secretscan.sh"
+  git -C "$TEAM" config core.hooksPath "$TEAM/.git/hooks"
+  git -C "$TEAM" config core.symlinks false
+  configure_team_sparse_checkout
+  install_test_team_hooks "$STATE/engine/lib"
   date -u +%FT%TZ > "$STATE/team-configured"
 }
 make_fake_mirror() { mkdir -p "$ROOT"; seed_repo "$BRAIN_ROOT/origin-mirror.git" "$MIRROR" sub/file.txt; ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git"; export ONLINE_CHECK_REMOTE; run_sync_cycle; }
