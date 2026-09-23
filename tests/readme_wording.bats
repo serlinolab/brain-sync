@@ -27,3 +27,21 @@ load 'helpers'
   run grep -qi 'second time\|second run\|paste.*again\|run it again\|run the.*line again' <<<"$creator_section"
   [ "$status" -ne 0 ]
 }
+
+# The brain's skills read their data through the MediaBuy connector; setup cannot add it,
+# because the sign-in must be the person's own.
+@test "the creator-facing section explains how to connect MediaBuy" {
+  local creator_section
+  creator_section=$(sed -n '1,/^## For Max$/p' "$REPO_ROOT/README.md" | sed '$d')
+  run grep -qF "https://mcp-mediabuy.maxora.it/mcp" <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  run grep -qF "Settings → Connectors" <<<"$creator_section"
+  [ "$status" -eq 0 ]
+}
+
+@test "the runbook covers the MediaBuy user when provisioning and when revoking" {
+  run grep -qi "MediaBuy user" "$REPO_ROOT/docs/runbook.md"
+  [ "$status" -eq 0 ]
+  run grep -qF "is_active = false" "$REPO_ROOT/docs/runbook.md"
+  [ "$status" -eq 0 ]
+}

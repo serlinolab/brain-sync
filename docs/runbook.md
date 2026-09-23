@@ -2,6 +2,9 @@
 
 ## Provisioning a new person or Mac
 
+0. Before the person sets up, create their MediaBuy user in MediaBuy admin. They sign in to
+   the MediaBuy connector with it (README, "Connect MediaBuy"); setup cannot do this step,
+   because the sign-in must be their own.
 1. The creator runs `setup.sh` on their Mac (see README.md). It ends by printing one line
    starting with `SERLINO-BRAIN-SETUP` and asks them to send it to you.
 2. Paste that whole line as the argument to `provision.sh`, from a Mac with the `gh` CLI
@@ -29,6 +32,9 @@
    "SOMETHING NEEDS YOUR ATTENTION.txt" on its own to prompt them to check in with you.
 
 ## Revoking access (a lost or returned Mac)
+
+Deactivate the person's MediaBuy user (`is_active = false` in MediaBuy admin). That cuts the
+MediaBuy website and every Claude surface using the connector immediately, on the next call.
 
 Deleting a deploy key stops that Mac's *next* fetch or push. It does **not** reach back to
 whatever is already sitting on that Mac's disk - a copy that was already synced stays there

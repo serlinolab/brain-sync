@@ -29,6 +29,16 @@ A folder called `Serlino` in your home folder, with:
 
 You never type a command or approve anything after setup.
 
+## Connect MediaBuy (once)
+
+The Serlino brain reads its data from MediaBuy. Without this step it can't see any numbers.
+
+1. In Claude, open **Settings → Connectors**. If **MediaBuy** is already listed, you're done.
+2. Otherwise choose **Add custom connector**, enter `https://mcp-mediabuy.maxora.it/mcp`, and
+   sign in with your MediaBuy username and password — the same ones you use on the MediaBuy
+   website.
+3. No MediaBuy login yet? Ask Max; he creates it.
+
 ## What leaves your Mac, and what never does
 
 Only `team/` leaves this Mac, and only to the team's own shared space —
