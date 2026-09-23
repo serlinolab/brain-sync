@@ -269,7 +269,15 @@ FAKEGIT
   git -C "$TEAM" -c user.name=t -c user.email=t@t.com commit --no-verify -qm 'cred starts as a symlink'
   rm -f "$TEAM/cred"
   fake_github_pat > "$TEAM/cred"
-  git -C "$TEAM" add cred
+  # MAX-1515 review finding D: the fixture's team/ now carries core.symlinks=false for real
+  # (the actual team/ invariant, fix 2) - under that setting a plain `git add` here keeps
+  # cred's PREVIOUS 120000 mode instead of re-typing it, because git cannot tell a checked-out
+  # symlink apart from a same-shaped regular file once symlinks are never materialized as
+  # symlinks to begin with. Stage the new blob at its real 100644 mode directly, the way a
+  # colleague's OWN machine (core.symlinks=true there) would actually have recorded it - that
+  # commit is what arrives over a fetch, regardless of this Mac's local setting.
+  local blob; blob=$(git -C "$TEAM" hash-object -w --stdin < "$TEAM/cred")
+  git -C "$TEAM" update-index --cacheinfo 100644,"$blob",cred
   # confirms the setup: a path that changes kind (symlink -> regular file) is reported as
   # Typechange (T), not Modified (M) - --diff-filter=ACMR alone never sees it
   run git -C "$TEAM" diff --cached --name-only --diff-filter=ACMR
