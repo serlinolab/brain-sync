@@ -18,8 +18,15 @@
 4. Re-running provision.sh with the same pasted line is always safe - it recognises the
    deploy keys are already registered and does nothing further. It never deletes or
    overwrites a key.
-5. Tell the creator to run `setup.sh` again. It will now finish cloning both repositories and
-   start the background sync.
+5. That's it - nothing to tell the creator. Their Mac's own background sync job (already
+   installed by their first and only `setup.sh` run) calls `complete_setup`
+   (`lib/complete_setup.sh`) every cycle; once the key is registered, the very next cycle
+   clones and configures whatever is still missing, on its own, no Terminal paste required.
+   To check progress on their Mac: `tail ~/Serlino/.state/sync.log`, or look for
+   `~/Serlino/.state/setup-complete` (present once both `team/` and `serlinolab/` are done).
+   If it is still pending after `SETUP_PENDING_ALERT_HOURS` (default 24, set as an environment
+   variable for the sync job - see `lib/common.sh`), the creator's Mac raises
+   "SOMETHING NEEDS YOUR ATTENTION.txt" on its own to prompt them to check in with you.
 
 ## Revoking access (a lost or returned Mac)
 

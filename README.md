@@ -1,6 +1,6 @@
 # Serlino Brain — Mac sync
 
-## Setup (two short steps)
+## Setup (one step)
 
 Paste this into Terminal and press return:
 
@@ -12,12 +12,8 @@ It asks for your name, then does everything it can on its own. At the end
 it prints one line starting with `SERLINO-BRAIN-SETUP` — copy that whole
 line and send it to Max. That's the only thing you ever need to send him.
 
-Part of setting you up happens on Max's side, so the first run can't finish
-everything by itself. Once Max tells you he's done, paste the exact same
-line into Terminal and press return again — that second run picks up where
-the first one left off and finishes the rest.
-
-Running the line again once everything is already finished does nothing, and tells you so.
+Send Max the line starting SERLINO-BRAIN-SETUP. That's all — your folders
+appear on their own within a few minutes of his approval.
 
 ## What you'll see
 
