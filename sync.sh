@@ -16,12 +16,16 @@ source "$DIR/lib/sync.sh"
 if [ "${BRAIN_SYNC_LOCK_HELD:-0}" != 1 ]; then acquire_lock || exit 0; fi
 [ -n "${SYNC_HOLD_SECONDS:-}" ] && sleep "$SYNC_HOLD_SECONDS"
 person_warn
-# MAX-1515 change A: finish a pending setup (the deploy key may just have been registered)
-# before doing anything else this cycle. Cheap once done - $STATE/setup-complete short-
-# circuits every later call, so a finished Mac's cycles never touch team/ or serlinolab/ here.
-# A still-pending result is never fatal to the rest of the cycle: whatever already exists on
-# disk is synced below exactly as it is today.
-[ -f "$STATE/setup-complete" ] || complete_setup || true
+# MAX-1515 change A, amended by review finding B: finish a pending setup (the deploy key may
+# just have been registered) before doing anything else this cycle. Never trusts
+# $STATE/team-configured or $STATE/setup-complete as proof team/ or serlinolab/ are actually
+# ready - both can survive a replacement directory that was never reconfigured.
+# team_is_protected/mirror_is_ready (lib/complete_setup.sh) re-derive the real state instead,
+# every cycle, so a finished Mac's cycles skip the call below without ever trusting a marker.
+# A still-pending or still-misconfigured result is never fatal to the rest of the cycle:
+# whatever already exists on disk is synced below exactly as it is today, and
+# commit_local/sync_team check their own readiness again in a moment.
+team_is_protected && mirror_is_ready || complete_setup || true
 commit_local
 commit_rc=$?
 if [ "$commit_rc" -eq 1 ]; then
