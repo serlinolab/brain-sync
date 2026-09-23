@@ -288,3 +288,17 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   if repo_exists "$BRAIN_ORG/brain-team"; then false; fi
   [ ! -s "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ]
 }
+
+@test "refuses when encoding the README template fails part-way, in a real run and in --dry-run" {
+  # A base64 that prints partial output and then fails must not pass as a valid README.
+  local shim; shim="$(mktemp -d)"
+  printf '#!/bin/bash\nprintf cGFydGlhbA==\nexit 1\n' > "$shim/base64"; chmod +x "$shim/base64"
+  PATH="$shim:$PATH" run bash "$REPO_ROOT/provision.sh" --dry-run "$LINE"
+  local dry_status=$status
+  PATH="$shim:$PATH" run bash "$REPO_ROOT/provision.sh" "$LINE"
+  rm -rf "$shim"
+  [ "$dry_status" -ne 0 ]
+  [ "$status" -ne 0 ]
+  if repo_exists "$BRAIN_ORG/brain-team"; then false; fi
+  [ ! -s "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ]
+}

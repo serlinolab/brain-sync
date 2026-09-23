@@ -217,8 +217,11 @@ team_repo_mutate(){
 # repo and refuse every time).
 phase1_checks(){
   # Encoded here, not in phase 2: a missing or unreadable template must refuse before anything is created.
-  README_CONTENT=$(base64 < "$TEAM_README_TEMPLATE" 2>/dev/null | tr -d '\n')
-  [ -n "$README_CONTENT" ] || { echo "refusing: team README template missing or unreadable at $TEAM_README_TEMPLATE" >&2; return 1; }
+  # No pipe: base64's own exit status must count, not tr's - partial output from a failed encode is refused.
+  if ! README_CONTENT=$(base64 < "$TEAM_README_TEMPLATE" 2>/dev/null) || [ -z "$README_CONTENT" ]; then
+    echo "refusing: team README template missing or unreadable at $TEAM_README_TEMPLATE" >&2; return 1
+  fi
+  README_CONTENT=${README_CONTENT//$'\n'/}
   team_repo_check || return 1
 
   verify_repo_identity "$MIRROR_REPO"; local mirror_rc=$?
