@@ -14,16 +14,23 @@ TEAM_INSTRUCTION_NAMES=(CLAUDE.md CLAUDE.local.md AGENTS.md .claude)
 # pulled file - MAX-1515 fix 4) can instead commit `name` as a DIRECTORY, with its own files
 # underneath. Excluding both the bare name and its `/**` descendants covers every object type
 # regardless of how git classifies it, for every name here, not just .claude.
+#
+# Pure content generator, no git calls - the one place the pattern's TEXT is built, so
+# write_team_sparse_checkout (the installer) and team_is_protected (lib/complete_setup.sh's
+# verifier, MAX-1515 review finding B) can never drift into checking two different patterns.
+team_sparse_checkout_pattern(){
+  local name
+  printf '/*\n'
+  for name in "${TEAM_INSTRUCTION_NAMES[@]}"; do
+    printf '!%s\n' "$name"
+    printf '!%s/**\n' "$name"
+  done
+}
+
 write_team_sparse_checkout(){
-  local team="$1" name
+  local team="$1"
   git -C "$team" sparse-checkout init --no-cone >/dev/null 2>&1 || return 1
-  {
-    printf '/*\n'
-    for name in "${TEAM_INSTRUCTION_NAMES[@]}"; do
-      printf '!%s\n' "$name"
-      printf '!%s/**\n' "$name"
-    done
-  } > "$team/.git/info/sparse-checkout" || return 1
+  team_sparse_checkout_pattern > "$team/.git/info/sparse-checkout" || return 1
   git -C "$team" sparse-checkout reapply >/dev/null 2>&1 || return 1
 }
 

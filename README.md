@@ -1,6 +1,6 @@
 # Serlino Brain — Mac sync
 
-## Setup (two short steps)
+## Setup (one step)
 
 Paste this into Terminal and press return:
 
@@ -12,12 +12,8 @@ It asks for your name, then does everything it can on its own. At the end
 it prints one line starting with `SERLINO-BRAIN-SETUP` — copy that whole
 line and send it to Max. That's the only thing you ever need to send him.
 
-Part of setting you up happens on Max's side, so the first run can't finish
-everything by itself. Once Max tells you he's done, paste the exact same
-line into Terminal and press return again — that second run picks up where
-the first one left off and finishes the rest.
-
-Running the line again once everything is already finished does nothing, and tells you so.
+Send Max the line starting SERLINO-BRAIN-SETUP. That's all — your folders
+appear on their own within a few minutes of his approval.
 
 ## What you'll see
 
@@ -32,6 +28,16 @@ A folder called `Serlino` in your home folder, with:
 - **what-changed.md** — a running list of recent changes in the Serlino brain.
 
 You never type a command or approve anything after setup.
+
+## Connect MediaBuy (once)
+
+The Serlino brain reads its data from MediaBuy. Without this step it can't see any numbers.
+
+1. In Claude, open **Settings → Connectors**. If **MediaBuy** is already listed, you're done.
+2. Otherwise choose **Add custom connector**, enter `https://mcp-mediabuy.maxora.it/mcp`, and
+   sign in with your MediaBuy username and password — the same ones you use on the MediaBuy
+   website.
+3. No MediaBuy login yet? Ask Max; he creates it.
 
 ## What leaves your Mac, and what never does
 

@@ -11,6 +11,10 @@ LOG="$STATE/sync.log"
 MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
 LOCK="$STATE/run.lock"
 STALE_HOURS="${STALE_HOURS:-4}"
+# MAX-1515 change A: how long setup may sit pending (a deploy key not yet registered, or its
+# clone/configure step failing) before update_attention_marker raises "SOMETHING NEEDS YOUR
+# ATTENTION.txt" about it. Overridable the same way STALE_HOURS is.
+SETUP_PENDING_ALERT_HOURS="${SETUP_PENDING_ALERT_HOURS:-24}"
 CONFLICT_STATE="$STATE/conflict_attempts"
 MAX_CONFLICT_ATTEMPTS=3          # AC-5: named constant, never a literal in the check
 CONFLICTS="$STATE/conflicts"      # AC-6: incoming copy of each conflicting file is saved here

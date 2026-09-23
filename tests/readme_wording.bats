@@ -16,14 +16,32 @@ load 'helpers'
   [[ "$output" == *"docs/runbook.md"* ]] || false
 }
 
-# Review fix 7: setup does not finish itself on the first run - part of it waits on Max. The
-# creator pastes the line once, sends Max what it prints, and pastes the SAME line again once
-# Max confirms he is done, to pick up where the first run left off.
-@test "the creator-facing section says to run the setup line a second time once Max confirms" {
+# MAX-1515 change A: setup finishes itself in the background (lib/complete_setup.sh, run from
+# every sync cycle) once Max has registered the deploy key - the creator pastes the setup line
+# exactly once, ever, and never has to come back to Terminal a second time.
+@test "the creator-facing section sends Max the line once and never asks for a second run" {
   local creator_section
   creator_section=$(sed -n '1,/^## For Max$/p' "$REPO_ROOT/README.md" | sed '$d')
-  run grep -qi 'again' <<<"$creator_section"
+  run grep -qF "Send Max the line starting SERLINO-BRAIN-SETUP" <<<"$creator_section"
   [ "$status" -eq 0 ]
-  run grep -qi 'second run\|paste.*again\|run it again\|run the.*line again' <<<"$creator_section"
+  run grep -qi 'second time\|second run\|paste.*again\|run it again\|run the.*line again' <<<"$creator_section"
+  [ "$status" -ne 0 ]
+}
+
+# The brain's skills read their data through the MediaBuy connector; setup cannot add it,
+# because the sign-in must be the person's own.
+@test "the creator-facing section explains how to connect MediaBuy" {
+  local creator_section
+  creator_section=$(sed -n '1,/^## For Max$/p' "$REPO_ROOT/README.md" | sed '$d')
+  run grep -qF "https://mcp-mediabuy.maxora.it/mcp" <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  run grep -qF "Settings → Connectors" <<<"$creator_section"
+  [ "$status" -eq 0 ]
+}
+
+@test "the runbook covers the MediaBuy user when provisioning and when revoking" {
+  run grep -qi "MediaBuy user" "$REPO_ROOT/docs/runbook.md"
+  [ "$status" -eq 0 ]
+  run grep -qF "is_active = false" "$REPO_ROOT/docs/runbook.md"
   [ "$status" -eq 0 ]
 }

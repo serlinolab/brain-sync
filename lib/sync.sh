@@ -47,6 +47,13 @@ TXT
 }
 
 sync_mirror(){
+  # MAX-1515 review, "also check": `-d "$MIRROR/.git"` follows a symlink - a symlinked $MIRROR
+  # pointing at a real git checkout elsewhere would otherwise pass straight through into fetch/
+  # reset/clean below. `-L` catches it whether or not its target exists, before that.
+  if [ -L "$MIRROR" ]; then
+    log "the company folder is a symlink; refusing to touch it"
+    return 1
+  fi
   [ -d "$MIRROR/.git" ] || return 0
   if ! remote_matches_expected "$MIRROR" "$EXPECTED_MIRROR_REMOTE"; then
     log "mirror origin does not match the expected remote; refusing to touch it"
@@ -71,10 +78,36 @@ sync_mirror(){
 # file that looks like it holds a secret, before either is ever staged. Neither rejection
 # blocks the rest of the cycle - every other staged file still commits.
 commit_local(){
+  # MAX-1515 re-review, finding F1b: $setup_rc (set by sync.sh right before calling this,
+  # unset/0 for every caller that doesn't - e.g. a test sourcing this file standalone, which
+  # keeps today's behaviour) is complete_setup's own status THIS cycle, and it is authoritative
+  # over the team_is_protected re-check a few lines below: a 3 means THIS cycle's own
+  # reconfigure attempt wrote real config into team/ and then failed partway, exactly the state
+  # finding F1a closes a blind spot in. Checked first, never overridden by what that re-check
+  # says on its own.
+  if [ "${setup_rc:-0}" -eq 3 ]; then
+    log "team folder configuration failed this cycle (complete_setup exit 3); skipping this cycle's team folder operations"
+    return 2
+  fi
+  # MAX-1515 review, "also check": same symlink gap as sync_mirror - `-d "$TEAM/.git"` follows
+  # a symlink, so check `-L` first, before anything else runs.
+  if [ -L "$TEAM" ]; then
+    log "the team folder is a symlink; refusing to touch it"
+    return 1
+  fi
   [ -d "$TEAM/.git" ] || return 0
   if ! remote_matches_expected "$TEAM" "$EXPECTED_TEAM_REMOTE"; then
     log "team origin does not match the expected remote; refusing to touch it"
     return 1
+  fi
+  # MAX-1515 review, finding C: an origin match alone is not proof team/ is actually protected
+  # (sparse-checkout, hooks, hooksPath, symlinks) - complete_setup's own configure step can
+  # fail (status 3) and a caller that discards that failure must not then commit into what is
+  # still an unprotected clone. team_is_protected (lib/complete_setup.sh) re-derives the real
+  # state; this cycle skips team/ entirely rather than trusting a marker or an origin match.
+  if ! team_is_protected "$TEAM"; then
+    log "team folder configuration is not complete; skipping this cycle"
+    return 2
   fi
   cd "$TEAM" || return 1
   local big secret rc=0
@@ -142,10 +175,28 @@ save_conflict_copies(){
 }
 
 sync_team(){
+  # MAX-1515 re-review, finding F1b: same $setup_rc check as commit_local above, checked first
+  # for the same reason - see its comment there. No separate log line: commit_local already ran
+  # (and logged) earlier in the same cycle whenever this matters.
+  if [ "${setup_rc:-0}" -eq 3 ]; then
+    return 2
+  fi
+  # MAX-1515 review, "also check": same symlink gap as commit_local/sync_mirror.
+  if [ -L "$TEAM" ]; then
+    log "the team folder is a symlink; refusing to touch it"
+    return 1
+  fi
   [ -d "$TEAM/.git" ] || return 0
   if ! remote_matches_expected "$TEAM" "$EXPECTED_TEAM_REMOTE"; then
     log "team origin does not match the expected remote; refusing to touch it"
     return 1
+  fi
+  # MAX-1515 review, finding C: never fetch/rebase/push into a team/ that matches the expected
+  # origin but was never actually protected (sparse-checkout/hooks) - a colleague's push could
+  # otherwise materialize instruction files straight onto disk through the rebase below.
+  if ! team_is_protected "$TEAM"; then
+    log "team folder configuration is not complete; skipping this cycle"
+    return 2
   fi
   cd "$TEAM" || return 1
   local n
@@ -206,6 +257,20 @@ update_attention_marker(){
     if [ -n "$age_h" ] && [ "$age_h" -ge "$STALE_HOURS" ]; then
       printf 'Your notes have not reached the team for %s hours.\nYour work is safe on this Mac. Nothing was lost.\nPlease tell Max.\n' "$age_h" > "$MARK"
       return
+    fi
+  fi
+  # MAX-1515 change A: setup itself (the team clone + its configuration, and the mirror clone -
+  # see lib/complete_setup.sh) can sit pending for a while waiting on a deploy key Max has not
+  # registered yet. Plain words, no git vocabulary - this can fire before team/ even exists.
+  if [ ! -f "$STATE/setup-complete" ]; then
+    local started elapsed_h
+    started=$(cat "$STATE/setup-started" 2>/dev/null || true)
+    if [ -n "$started" ]; then
+      elapsed_h=$(( ($(date +%s) - started) / 3600 ))
+      if [ "$elapsed_h" -ge "$SETUP_PENDING_ALERT_HOURS" ]; then
+        printf 'Your Serlino folders are not ready yet.\nMax may still need to approve this Mac.\nNothing is lost.\nPlease tell Max.\n' > "$MARK"
+        return
+      fi
     fi
   fi
   rm -f "$MARK"
