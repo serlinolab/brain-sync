@@ -69,3 +69,57 @@ teardown() { brain_test_teardown; }
   git -C "$TEAM" stash list | grep -q .   # the conflicting stash is preserved, not silently dropped
   ! git -C "$BRAIN_ROOT/origin-team.git" show main:note.txt | grep -q "<<<<<<<"
 }
+
+@test "an unrelated pre-existing stash never blocks the push" {
+  # Codex re-review of 0b5862b: a stash the person made themselves (or one left over from a
+  # previous, already-reported autostash conflict) must never be mistaken for THIS cycle's own
+  # autostash - only a NEW entry this cycle's own rebase creates and fails to reapply counts.
+  echo "pre-existing stash content" > "$TEAM/other.txt"
+  git -C "$TEAM" add -A
+  git -C "$TEAM" -c user.name=fixture -c user.email=fixture@example.com stash push -q -m "unrelated, made by the person"
+  [ -n "$(git -C "$TEAM" stash list)" ]
+
+  echo "a real note" >> "$TEAM/note.txt"
+  git -C "$TEAM" add -A; git_commit "$TEAM" mine
+
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run bash "$REPO_ROOT/sync.sh"
+
+  [ "$status" -eq 0 ]
+  git -C "$BRAIN_ROOT/origin-team.git" show main:note.txt | grep -q "a real note"
+  [ ! -f "$MARK" ]
+  [ ! -f "$STATE/autostash_conflict" ]
+  # the person's own stash is still exactly there, untouched either way
+  git -C "$TEAM" stash list | grep -q "unrelated, made by the person"
+}
+
+@test "a genuine autostash pop conflict raises the attention file in plain words and keeps the content" {
+  local other; other="$(mktemp -d)"
+  git clone -q "$BRAIN_ROOT/origin-team.git" "$other"
+  echo "colleague content" > "$other/note.txt"
+  git -C "$other" add -A; git_commit "$other" colleague
+  git -C "$other" push -q origin main
+  rm -rf "$other"
+
+  echo "dirty local edit" > "$TEAM/note.txt"   # tracked, dirty, uncommitted - what autostash stashes
+  # bypasses commit_local on purpose (a full engine cycle would commit this dirty edit before
+  # sync_team ever runs, leaving nothing for --autostash to stash) - calls sync_team directly,
+  # the same pattern the existing autostash test above uses, then update_attention_marker the
+  # same way sync.sh's own entry point does right after.
+  run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/secretscan.sh'; \
+    source '$REPO_ROOT/lib/team_layout.sh'; source '$REPO_ROOT/lib/complete_setup.sh'; \
+    source '$REPO_ROOT/lib/sync.sh'; ONLINE_CHECK_REMOTE='$BRAIN_ROOT/origin-team.git'; \
+    sync_team; rc=\$?; update_attention_marker; exit \$rc"
+
+  [ "$status" -ne 0 ]
+  [ -f "$STATE/autostash_conflict" ]
+  [ -f "$MARK" ]
+  ! grep -qi 'rebase\|stash\|autostash\|conflict' "$MARK"   # plain words, no git vocabulary
+  grep -q "could not be" "$MARK"
+  git -C "$TEAM" stash list | grep -q .   # the person's content is retained, not lost
+
+  # self-heals once a human resolves it for real (AC-7: re-derived, not just a stale flag)
+  git -C "$TEAM" stash drop -q
+  run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/sync.sh'; update_attention_marker"
+  [ ! -f "$STATE/autostash_conflict" ]
+  [ ! -f "$MARK" ]
+}

@@ -2,6 +2,14 @@
 # shellcheck disable=SC2034  # a constants file: every name here is used by a sibling, not locally
 # Shared paths, constants, logging and the lock. Sourced by sync.sh and
 # tests (override BRAIN_ROOT in tests instead of the real $HOME/Serlinolab).
+# Codex re-review of 0b5862b, non-blocking: none of `git ls-remote`/`fetch`/`push` had a
+# timeout, and setup.sh's `append_host` only ever writes the `~/.ssh/config` Host block ONCE
+# (it is a no-op once the block already exists - see append_host there), so adding options to
+# that template would only ever reach a Mac set up AFTER this ships, never Max's or Karl's
+# already-stuck Macs. Setting it here instead reaches every Mac the moment the engine
+# self-updates, for every git network call this process makes, with no dependency on setup.sh
+# ever running again. Only set when not already overridden by the environment.
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15}"
 ROOT="${BRAIN_ROOT:-$HOME/Serlinolab}"
 STATE="$ROOT/.state"
 TEAM="$ROOT/team"                 # MAX-1515: two-way, everyone writes
@@ -18,6 +26,12 @@ SETUP_PENDING_ALERT_HOURS="${SETUP_PENDING_ALERT_HOURS:-24}"
 CONFLICT_STATE="$STATE/conflict_attempts"
 MAX_CONFLICT_ATTEMPTS=3          # AC-5: named constant, never a literal in the check
 CONFLICTS="$STATE/conflicts"      # AC-6: incoming copy of each conflicting file is saved here
+# Codex re-review of 0b5862b: set by sync_team when an autostash it created itself (never a
+# pre-existing, unrelated stash - see the delta check in lib/sync.sh) fails to reapply after a
+# rebase, so update_attention_marker can raise a plain-language marker instead of the Mac
+# wedging silently. Cleared by update_attention_marker itself once the stash is actually gone
+# (re-derived from real state, AC-7 - never trusted as a standing flag on its own).
+AUTOSTASH_CONFLICT_STATE="$STATE/autostash_conflict"
 QUARANTINE="$STATE/quarantine"    # AC-4: locally-created instruction files are moved here, never deleted
 ONLINE_CHECK_REMOTE="${ONLINE_CHECK_REMOTE:-git@brain-mirror:serlinolab/Serlinolab-Brain.git}"
 # MAX-1515 fix 4b: what setup.sh ever adopts or creates team/ and the mirror against - the

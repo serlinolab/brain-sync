@@ -296,6 +296,11 @@ sync_team(){
   local n
   n=$(cat "$CONFLICT_STATE" 2>/dev/null || echo 0)
   local already_rebased=0
+  # Codex re-review of 0b5862b: captured BEFORE either rebase attempt below - a stash that was
+  # already sitting here for an unrelated reason (a person's own `git stash`, or an earlier
+  # cycle's still-unresolved autostash conflict) must never block THIS push. Only a NEW entry -
+  # one this cycle's own `--autostash` created and then failed to reapply - counts.
+  local stash_before; stash_before=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
   if [ "$healed" = 1 ] && [ "$n" -ge "$MAX_CONFLICT_ATTEMPTS" ]; then
     # Codex review of aea244e, blocking finding 3: cleaning junk out of local history is not
     # proof the park itself was junk-caused - a genuine content conflict that also happened to
@@ -334,13 +339,17 @@ sync_team(){
     fi
   fi
   rm -f "$CONFLICT_STATE"
-  # Codex review of aea244e, non-blocking finding 6: a rebase that succeeds can still leave the
-  # autostash NOT fully reapplied - if popping it conflicts with the new HEAD, `git rebase
-  # --autostash` still exits 0 (only a warning is printed) and leaves the stash entry behind
-  # instead of dropping it, with the working tree possibly carrying unresolved conflict
-  # markers. Pushing (or letting the next commit_local `git add -A` that) through would be
-  # silent corruption - refuse instead, and say exactly what happened.
-  if [ -n "$(git stash list 2>/dev/null)" ]; then
+  # Codex review of aea244e, non-blocking finding 6 (tightened by the re-review of 0b5862b): a
+  # rebase that succeeds can still leave the autostash NOT fully reapplied - if popping it
+  # conflicts with the new HEAD, `git rebase --autostash` still exits 0 (only a warning is
+  # printed) and leaves the stash entry behind instead of dropping it, with the working tree
+  # possibly carrying unresolved conflict markers. Pushing (or letting the next commit_local
+  # `git add -A` that) through would be silent corruption - refuse instead. Compared against
+  # $stash_before (captured above, before either rebase attempt), not bare non-emptiness - an
+  # unrelated pre-existing stash must never trip this or block the push.
+  local stash_after; stash_after=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$stash_after" -gt "$stash_before" ]; then
+    : > "$AUTOSTASH_CONFLICT_STATE"
     log "the autostash could not be reapplied cleanly after the rebase; local changes are preserved in 'git stash' - refusing to push until a human resolves this"
     return 1
   fi
@@ -382,6 +391,17 @@ update_attention_marker(){
       secret_first=$(head -1 "$STATE/secret_rejects")
       printf 'A file looked like it contained a password or access key, so it was kept out of the team folder:\n  %s\nIt is still on this Mac, unchanged. Please tell Max.\n' "$secret_first" > "$MARK"
       return
+    fi
+    # Codex re-review of 0b5862b: re-derived from the real stash list, not trusted as a
+    # standing flag (AC-7) - if a human already ran `git stash pop`/`drop` and the stash is
+    # genuinely gone, this clears itself and falls through to the checks below instead of
+    # claiming a problem that no longer exists.
+    if [ -f "$AUTOSTASH_CONFLICT_STATE" ]; then
+      if [ -n "$(git -C "$TEAM" stash list 2>/dev/null)" ]; then
+        printf 'Some of your local changes could not be automatically reapplied after the last update and are waiting safely in a hidden spot on this Mac.\nNothing was lost - please tell Max so this Mac can be fixed.\n' > "$MARK"
+        return
+      fi
+      rm -f "$AUTOSTASH_CONFLICT_STATE"
     fi
     if [ -f "$CONFLICT_STATE" ] && [ "$(cat "$CONFLICT_STATE")" -gt 0 ]; then
       printf 'A page in the team folder was changed by you and by a colleague at the same time.\nYour version is safe on this Mac.\nPlease tell Max.\n' > "$MARK"

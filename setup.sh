@@ -88,11 +88,17 @@ fi
 
 append_host() {
   local alias="$1" key="$2"
+  # Codex re-review of 0b5862b, non-blocking: this only ever runs ONCE per alias (the grep
+  # above makes every later call a no-op), so BatchMode/ConnectTimeout here only ever reach a
+  # Mac set up AFTER this ships - lib/common.sh's GIT_SSH_COMMAND is what reaches an
+  # already-set-up Mac. Written here too anyway: belt and suspenders, and it means a fresh
+  # install's ssh config carries the same timeout even for a direct `ssh`/`git` invocation that
+  # does not go through the engine's own environment.
   grep -q "^Host $alias$" "$SSH_CONFIG" 2>/dev/null && return 0
   if [ -s "$SSH_CONFIG" ] && [ "$(tail -c 1 "$SSH_CONFIG" | wc -l)" -eq 0 ]; then
     printf '\n' >> "$SSH_CONFIG"
   fi
-  printf 'Host %s\n  HostName github.com\n  User git\n  IdentityFile "%s"\n  IdentitiesOnly yes\n' "$alias" "$key" >> "$SSH_CONFIG"
+  printf 'Host %s\n  HostName github.com\n  User git\n  IdentityFile "%s"\n  IdentitiesOnly yes\n  BatchMode yes\n  ConnectTimeout 15\n' "$alias" "$key" >> "$SSH_CONFIG"
 }
 append_host brain-mirror "$MIRROR_KEY" || setup_ok=0
 append_host brain-team "$TEAM_KEY" || setup_ok=0
