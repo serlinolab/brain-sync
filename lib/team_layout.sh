@@ -54,4 +54,36 @@ team_add_exclude_pathspecs(){
     printf ':(exclude,glob,icase)**/%s\n' "$name"
     printf ':(exclude,glob,icase)**/%s/**\n' "$name"
   done
+  local p
+  for p in "${TEAM_OS_JUNK_PATTERNS[@]}"; do
+    printf ':(exclude,glob)**/%s\n' "$p"
+  done
+}
+
+# 2026-09-24 live incident: Finder writes/rewrites these into any folder it opens, on its own
+# schedule, forever. Tracking any of them makes team/'s working tree "dirty" again the instant
+# it is cleaned, which is what turned an ordinary sync cycle into a permanently-dirty tree and
+# then a false rebase "conflict" (lib/sync.sh's sync_team). One array - lib/sync.sh's
+# heal_local_junk_history and commit_local, and team_add_exclude_pathspecs above, all read the
+# SAME list so none of them can drift from what is actually excluded.
+TEAM_OS_JUNK_PATTERNS=(.DS_Store '._*' .AppleDouble .Spotlight-V100 .Trashes .fseventsd 'Icon?' '*.icloud')
+
+# `.git/info/exclude` is per-clone and local-only - unlike a tracked .gitignore, a colleague's
+# push can never edit or override it. Regenerated every cycle (both by a fresh setup, via
+# complete_setup, and by an already-set-up Mac's own sync cycle, via commit_local) so existing
+# Macs heal themselves without waiting for a fresh clone.
+write_team_exclude(){
+  local team="$1"
+  mkdir -p "$team/.git/info" || return 1
+  local p
+  { for p in "${TEAM_OS_JUNK_PATTERNS[@]}"; do printf '%s\n' "$p"; done; } > "$team/.git/info/exclude"
+}
+
+# Pathspecs for `git rm`/`git log`/`git diff` (porcelain plumbing, not the exclude file's
+# gitignore syntax) - matches TEAM_OS_JUNK_PATTERNS at any depth.
+team_os_junk_pathspecs(){
+  local p
+  for p in "${TEAM_OS_JUNK_PATTERNS[@]}"; do
+    printf ':(glob)**/%s\n' "$p"
+  done
 }

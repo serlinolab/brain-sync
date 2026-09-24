@@ -110,9 +110,21 @@ commit_local(){
     return 2
   fi
   cd "$TEAM" || return 1
+  # 2026-09-24 incident: heal an already-set-up Mac too, not just a fresh clone -
+  # complete_setup's write_team_exclude only ever runs once, at configure time, so an
+  # already-protected team/ (team_is_protected true, complete_setup skipped entirely) would
+  # otherwise never get it. Regenerating every cycle is one cheap file write.
+  write_team_exclude "$TEAM" || { log "could not write the OS-junk exclude file"; return 1; }
+  # Untrack any OS junk a colleague or an earlier version of this engine already committed -
+  # the exclude file above only stops a NEW untracked file from being added; an already-
+  # tracked one stays "modified" (and the tree "dirty") every time Finder rewrites it. Keeps
+  # the file on disk, only drops it from git's index.
+  local -a junk_specs=()
+  local spec
+  while IFS= read -r spec; do junk_specs+=("$spec"); done < <(team_os_junk_pathspecs)
+  git rm -r --cached --ignore-unmatch -q -- "${junk_specs[@]}" >/dev/null 2>&1 || true
   local big secret rc=0
   local -a exclude_specs=()
-  local spec
   while IFS= read -r spec; do exclude_specs+=("$spec"); done < <(team_add_exclude_pathspecs)
   git add -A -- . "${exclude_specs[@]}" || { log "git add failed"; return 1; }
   while IFS= read -r -d '' big; do
@@ -174,6 +186,50 @@ save_conflict_copies(){
   done < <(git diff --name-only -z --diff-filter=U)
 }
 
+# 2026-09-24 incident, root causes 1+4: heals a Mac whose LOCAL, not-yet-pushed commits
+# already carry OS junk from before this fix existed (Finder rewriting .DS_Store between
+# cycles, committed by the old commit_local). These commits were never pushed - origin/main is
+# untouched by this, nothing is forced, nothing shared is rewritten. Drops the junk from every
+# commit's tree in the unpushed range and prunes any commit left empty by that (one that ONLY
+# ever touched .DS_Store); a commit that also carried a real note change keeps that change,
+# junk stripped out of it. One `git log` once the backlog is clean, so safe to call every
+# cycle. Prints 1 on stdout if it actually rewrote something, 0 otherwise.
+heal_local_junk_history(){
+  local team="$1"
+  git -C "$team" rev-parse --verify -q origin/main >/dev/null 2>&1 || { echo 0; return 0; }
+  local ahead; ahead=$(git -C "$team" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+  [ "$ahead" -gt 0 ] || { echo 0; return 0; }
+  local -a specs=()
+  local spec
+  while IFS= read -r spec; do specs+=("$spec"); done < <(team_os_junk_pathspecs)
+  local touched
+  touched=$(git -C "$team" log --name-only --pretty=format: origin/main..HEAD -- "${specs[@]}" 2>/dev/null | sed '/^$/d')
+  [ -n "$touched" ] || { echo 0; return 0; }
+  log "rewriting $ahead unpushed local commit(s) to drop OS junk before it can reach the team"
+  local filter_script
+  filter_script=$(mktemp) || { echo 0; return 0; }
+  {
+    printf '#!/bin/bash\n'
+    printf 'git rm -r --cached --ignore-unmatch -q --'
+    local p
+    for p in "${specs[@]}"; do printf ' %q' "$p"; done
+    printf '\n'
+  } > "$filter_script"
+  chmod +x "$filter_script"
+  rm -rf "$team/.git/refs/original"   # a stale backup ref from an earlier failed attempt
+  if FILTER_BRANCH_SQUELCH_WARNING=1 git -C "$team" filter-branch -f --prune-empty \
+       --index-filter "$filter_script" -- origin/main..HEAD >>"$LOG" 2>&1; then
+    rm -rf "$team/.git/refs/original"
+    rm -f "$filter_script"
+    log "local history cleaned; real changes kept, junk dropped"
+    echo 1
+  else
+    rm -f "$filter_script"
+    log "could not clean local history of OS junk; leaving it for a human to look at"
+    echo 0
+  fi
+}
+
 sync_team(){
   # MAX-1515 re-review, finding F1b: same $setup_rc check as commit_local above, checked first
   # for the same reason - see its comment there. No separate log line: commit_local already ran
@@ -199,14 +255,32 @@ sync_team(){
     return 2
   fi
   cd "$TEAM" || return 1
+  # 2026-09-24 incident: clean any junk-only local history BEFORE honouring the conflict
+  # latch below - a park caused purely by OS junk (dirty tree, never a real content conflict;
+  # see the rebase call below) deserves a fresh set of attempts once the junk that caused it is
+  # gone, rather than staying parked forever waiting on a human.
+  local healed; healed=$(heal_local_junk_history "$TEAM")
   local n
   n=$(cat "$CONFLICT_STATE" 2>/dev/null || echo 0)
+  if [ "$healed" = 1 ] && [ -f "$CONFLICT_STATE" ]; then
+    log "cleared a parked conflict after cleaning local history of OS junk"
+    rm -f "$CONFLICT_STATE"
+    n=0
+  fi
   if [ "$n" -ge "$MAX_CONFLICT_ATTEMPTS" ]; then   # AC-5: bounded, named constant
     log "conflict unresolved after $n attempts; not retrying until a human intervenes"
     return 3
   fi
-  git fetch --quiet origin || { log "team fetch failed (offline?)"; return 1; }
-  if ! git rebase --quiet origin/main 2>>"$LOG"; then
+  local fetch_err
+  if ! fetch_err=$(git fetch --quiet origin 2>&1); then
+    log "team fetch failed: ${fetch_err:-no error output}"
+    return 1
+  fi
+  # --autostash: a dirty TRACKED file (historically .DS_Store, rewritten by Finder between
+  # commit_local's commit and this rebase) is not a content conflict - it must never be
+  # counted as one. autostash stashes it, rebases cleanly, and restores it after, so only a
+  # real, unresolvable diff against origin/main ever reaches the branch below.
+  if ! git rebase --quiet --autostash origin/main 2>>"$LOG"; then
     save_conflict_copies
     git rebase --abort 2>/dev/null || true
     echo $((n+1)) > "$CONFLICT_STATE"
@@ -222,7 +296,11 @@ sync_team(){
       return 1
     fi
   done < <(git remote get-url --push --all origin 2>/dev/null)
-  git push --quiet origin main 2>>"$LOG" || { log "push failed"; return 1; }
+  local push_err
+  if ! push_err=$(git push --quiet origin main 2>&1); then
+    log "push failed: ${push_err:-no error output}"
+    return 1
+  fi
   log "team at $(git rev-parse --short HEAD)"
 }
 
