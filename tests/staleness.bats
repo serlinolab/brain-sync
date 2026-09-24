@@ -7,6 +7,7 @@ teardown() { brain_test_teardown; }
 
 @test "the attention marker appears when local work is unpushed and the network is down" {
   make_local_ahead_change
+  simulate_team_remote_down   # team_online() probes team/'s own origin now, not just the mirror
   STALE_HOURS=0 run_sync_cycle
   [ -f "$MARK" ]
 }
@@ -21,6 +22,7 @@ teardown() { brain_test_teardown; }
   git -C "$TEAM" add old.txt
   GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:00:00Z' \
     git -C "$TEAM" -c user.name=fixture -c user.email=fixture@example.com commit -q -m old
+  simulate_team_remote_down   # team_online() probes team/'s own origin now, not just the mirror
   STALE_HOURS=4 run bash "$REPO_ROOT/sync.sh"
   [ -f "$MARK" ]
 }
@@ -33,7 +35,9 @@ teardown() { brain_test_teardown; }
 @test "stale_check is ordered before the network guard and never touches the network itself" {
   local at_stale at_online
   at_stale=$(grep -nE '^\s*stale_check\b' "$REPO_ROOT/sync.sh" | head -1 | cut -d: -f1)
-  at_online=$(grep -nE '^\s*if ! online\b' "$REPO_ROOT/sync.sh" | head -1 | cut -d: -f1)
+  # online()/team_online() each probe their own remote (Codex review of aea244e, finding 1) -
+  # match the first line that actually calls either, not the old single "if ! online" gate.
+  at_online=$(grep -nE '^\s*(online \|\||team_online \|\|)' "$REPO_ROOT/sync.sh" | head -1 | cut -d: -f1)
   [ -n "$at_stale" ] && [ -n "$at_online" ]
   [ "$at_stale" -lt "$at_online" ]
 

@@ -102,7 +102,7 @@ teardown() { brain_test_teardown; }
   # the real content reached the remote
   git -C "$BRAIN_ROOT/origin-team.git" show main:note.txt | grep -q "the real note"
   # no commit that reached the remote carries .DS_Store in its tree
-  ! git -C "$BRAIN_ROOT/origin-team.git" log --name-only --all -- '**/.DS_Store' | grep -q DS_Store
+  ! git -C "$BRAIN_ROOT/origin-team.git" log --name-only --all -- ':(glob)**/.DS_Store' | grep -q DS_Store
   # and no blob matching the junk content is reachable at all
   ! git -C "$BRAIN_ROOT/origin-team.git" cat-file --batch-all-objects --batch-check 2>/dev/null \
       | awk '$2=="blob"{print $1}' \
@@ -120,4 +120,23 @@ teardown() { brain_test_teardown; }
   [ "$status" -eq 0 ]
   [ ! -f "$CONFLICT_STATE" ]
   git -C "$BRAIN_ROOT/origin-team.git" rev-parse main >/dev/null
+}
+
+@test "a file inside a directory-shaped junk name (.Trashes/, .fseventsd/) is excluded too, not just the bare directory" {
+  mkdir -p "$TEAM/.Trashes" "$TEAM/.fseventsd" "$TEAM/.Spotlight-V100" "$TEAM/.AppleDouble"
+  echo x > "$TEAM/.Trashes/deleted-thing"
+  echo x > "$TEAM/.fseventsd/0000000012345"
+  echo x > "$TEAM/.Spotlight-V100/store.db"
+  echo x > "$TEAM/.AppleDouble/resource"
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle
+  ! git -C "$TEAM" ls-files --error-unmatch .Trashes/deleted-thing >/dev/null 2>&1
+  ! git -C "$TEAM" ls-files --error-unmatch .fseventsd/0000000012345 >/dev/null 2>&1
+  ! git -C "$TEAM" ls-files --error-unmatch .Spotlight-V100/store.db >/dev/null 2>&1
+  ! git -C "$TEAM" ls-files --error-unmatch .AppleDouble/resource >/dev/null 2>&1
+}
+
+@test "junk exclusion is case-insensitive, matching a Mac's case-insensitive filesystem" {
+  echo x > "$TEAM/.ds_store"
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle
+  ! git -C "$TEAM" ls-files --error-unmatch .ds_store >/dev/null 2>&1
 }

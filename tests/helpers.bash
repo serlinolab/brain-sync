@@ -67,6 +67,14 @@ make_fake_team_repo() {
 }
 make_fake_mirror() { mkdir -p "$ROOT"; seed_repo "$BRAIN_ROOT/origin-mirror.git" "$MIRROR" sub/file.txt; ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git"; export ONLINE_CHECK_REMOTE; run_sync_cycle; }
 make_local_ahead_change() { echo 'unsent note' >> "$TEAM/note.txt"; }
+
+# team_online() (lib/sync.sh) now probes team/'s OWN real origin, not ONLINE_CHECK_REMOTE - so
+# simulating a fully offline Mac (both remotes down, not just the mirror) means genuinely
+# taking team/'s bare origin away too, not just overriding ONLINE_CHECK_REMOTE. Restore with
+# restore_team_remote before anything in the same test needs team/ reachable again; teardown's
+# BRAIN_ROOT wipe cleans it up either way if a test never restores it.
+simulate_team_remote_down() { mv "$BRAIN_ROOT/origin-team.git" "$BRAIN_ROOT/origin-team.git.moved"; }
+restore_team_remote() { mv "$BRAIN_ROOT/origin-team.git.moved" "$BRAIN_ROOT/origin-team.git"; }
 run_sync_cycle() { bash "$REPO_ROOT/sync.sh"; }
 
 make_fake_brain_sync_origin() {

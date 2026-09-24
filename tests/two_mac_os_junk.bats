@@ -15,7 +15,7 @@ dirty_finder_junk() {   # $1 = team dir, $2 = content - simulates Finder rewriti
 
 no_ds_store_ever_reached_origin() {
   local hits
-  hits=$(git -C "$BRAIN_ROOT/origin-team.git" log --all --name-only --pretty=format: -- '**/.DS_Store' 2>/dev/null | sed '/^$/d')
+  hits=$(git -C "$BRAIN_ROOT/origin-team.git" log --all --name-only --pretty=format: -- ':(glob)**/.DS_Store' 2>/dev/null | sed '/^$/d')
   [ -z "$hits" ]
 }
 

@@ -353,7 +353,12 @@ push_colleague_instructions_to_team_origin() {
   push_colleague_instructions_to_team_origin
 
   FAIL_SPARSE=1 BRAIN_ROOT="$HOME/Serlinolab" run bash "$REPO_ROOT/sync.sh"
-  [ "$status" -eq 0 ]
+  # Codex review of aea244e, blocking finding 1: team_online() (lib/sync.sh) now probes team/'s
+  # OWN remote independently of the mirror, so this fixture's genuinely-empty mirror.git (a
+  # scaffolding artifact, never a deliberate "offline" simulation) no longer masks sync_team
+  # actually being attempted here - it correctly runs and correctly skips (exit 2, "team folder
+  # configuration is not complete"), which is a more honest signal than the old accidental 0.
+  [ "$status" -eq 2 ]
 
   # never deleted - this run adopted it rather than cloning it itself
   [ -d "$HOME/Serlinolab/team/.git" ]
@@ -386,10 +391,14 @@ push_colleague_instructions_to_team_origin() {
   [ -f "$HOME/Serlinolab/team/CLAUDE.md" ]
 
   FAIL_SPARSE_REAPPLY=1 BRAIN_ROOT="$HOME/Serlinolab" run bash "$REPO_ROOT/sync.sh"
-  [ "$status" -eq 0 ]
+  # Codex review of aea244e, blocking finding 1: team_online() (lib/sync.sh) probes team/'s own
+  # remote independently of the mirror now, so sync_team IS reached this cycle - but its very
+  # first check (finding F1b, `setup_rc -eq 3`) returns immediately, before any git operation
+  # on team/, giving the more honest exit 2 ("skip") instead of an exit 0 that used to depend
+  # on this fixture's unrelated, always-empty mirror.git happening to gate the whole cycle.
+  [ "$status" -eq 2 ]
 
-  # commit_local/sync_team were never reached this cycle (finding F1b) - never fetched/rebased,
-  # never staged/committed a colleague's push onto an unprotected team/
+  # never fetched/rebased, never staged/committed a colleague's push onto an unprotected team/
   [ "$(git -C "$HOME/Serlinolab/team" rev-parse HEAD)" = "$before" ]
   grep -q "skipping this cycle's team folder operations" "$HOME/Serlinolab/.state/sync.log"
   # the exact gap the finding names: reapply never ran, so CLAUDE.md is still there
@@ -503,7 +512,12 @@ EOF
   printf 'testperson\n' > "$HOME/Serlinolab/.state/person"
   PATH="$fakebin:$HOME/bin:$PATH" BRAIN_ROOT="$HOME/Serlinolab" run bash "$REPO_ROOT/sync.sh"
 
-  [ "$status" -eq 0 ]
+  # Codex review of aea244e, blocking finding 1: the winner's clone that materializes here is
+  # never actually configured (complete_setup's clone step reported failure to THIS attempt, so
+  # it never reached the configure block) - team_online() now correctly finds team/'s own
+  # remote reachable and lets sync_team run, which correctly refuses an unprotected team/ (exit
+  # 2), rather than exit 0 riding on this fixture's unrelated, always-empty mirror.git.
+  [ "$status" -eq 2 ]
   [ -d "$HOME/Serlinolab/team/.git" ]
   [ "$(cd "$HOME/Serlinolab/team" && git remote get-url origin)" = 'git@brain-team:serlinolab/brain-team.git' ]
   [[ "$output" == *"already completed elsewhere"* ]] || false

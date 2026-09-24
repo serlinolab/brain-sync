@@ -3,6 +3,26 @@
 
 online(){ git ls-remote --exit-code "$ONLINE_CHECK_REMOTE" HEAD >/dev/null 2>&1; }
 
+# Codex review of aea244e, blocking finding 1: ONLINE_CHECK_REMOTE (online() above) probes only
+# the MIRROR's own remote - it defaults to EXPECTED_MIRROR_REMOTE, over the mirror's own deploy
+# key. A single "offline" verdict from that ONE probe used to gate BOTH sync_mirror and
+# sync_team, so a mirror-key-only outage (not yet registered, revoked, or the mirror host down)
+# blocked team/ from syncing even though team/ has its own remote and its own key and was
+# perfectly reachable - the exact shape of the MacBook Air's 13:26 "offline" log line during the
+# 2026-09-24 incident. Probes team/'s ACTUAL configured origin when team/ exists (so a swapped
+# or genuinely broken team remote is still caught for real); before team/ exists (still pending
+# setup) falls back to the expected remote itself, so a brand-new Mac's very first cycles can
+# tell "team key not registered yet" apart from "no network at all".
+team_online(){
+  local remote
+  if [ -d "$TEAM/.git" ]; then
+    remote=$(git -C "$TEAM" remote get-url origin 2>/dev/null) || return 1
+  else
+    remote="$EXPECTED_TEAM_REMOTE"
+  fi
+  git ls-remote --exit-code "$remote" HEAD >/dev/null 2>&1
+}
+
 # MAX-1515 fix 4b: a refused-then-later-swapped repo must never be touched just because it
 # sits at the expected path - every mutating function below re-checks this first. Verifies
 # BOTH the fetch URL and every push URL equal `expected` (a self-consistent fetch==push pair
@@ -255,39 +275,75 @@ sync_team(){
     return 2
   fi
   cd "$TEAM" || return 1
-  # 2026-09-24 incident: clean any junk-only local history BEFORE honouring the conflict
-  # latch below - a park caused purely by OS junk (dirty tree, never a real content conflict;
-  # see the rebase call below) deserves a fresh set of attempts once the junk that caused it is
-  # gone, rather than staying parked forever waiting on a human.
-  local healed; healed=$(heal_local_junk_history "$TEAM")
-  local n
-  n=$(cat "$CONFLICT_STATE" 2>/dev/null || echo 0)
-  if [ "$healed" = 1 ] && [ -f "$CONFLICT_STATE" ]; then
-    log "cleared a parked conflict after cleaning local history of OS junk"
-    rm -f "$CONFLICT_STATE"
-    n=0
-  fi
-  if [ "$n" -ge "$MAX_CONFLICT_ATTEMPTS" ]; then   # AC-5: bounded, named constant
-    log "conflict unresolved after $n attempts; not retrying until a human intervenes"
-    return 3
-  fi
+  # Codex review of aea244e, blocking finding 2: fetch BEFORE healing - heal_local_junk_history
+  # bounds its rewrite to `origin/main..HEAD`, and that has to be the FRESH origin/main, not
+  # whatever this clone last knew (possibly long stale, or never fetched at all on a brand-new
+  # clone). Healing against a stale origin/main could rewrite commits that are no longer ahead,
+  # or miss ones that now are. If origin/main is still unknown after a successful fetch, this
+  # cycle does not push at all.
   local fetch_err
   if ! fetch_err=$(git fetch --quiet origin 2>&1); then
     log "team fetch failed: ${fetch_err:-no error output}"
     return 1
   fi
-  # --autostash: a dirty TRACKED file (historically .DS_Store, rewritten by Finder between
-  # commit_local's commit and this rebase) is not a content conflict - it must never be
-  # counted as one. autostash stashes it, rebases cleanly, and restores it after, so only a
-  # real, unresolvable diff against origin/main ever reaches the branch below.
-  if ! git rebase --quiet --autostash origin/main 2>>"$LOG"; then
-    save_conflict_copies
-    git rebase --abort 2>/dev/null || true
-    echo $((n+1)) > "$CONFLICT_STATE"
-    log "CONFLICT parked (attempt $((n+1))/$MAX_CONFLICT_ATTEMPTS); local content retained"
+  if ! git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    log "origin/main still unknown after fetch; not pushing this cycle"
+    return 1
+  fi
+  # 2026-09-24 incident: clean any junk-only local history, now bounded by the fresh
+  # origin/main above.
+  local healed; healed=$(heal_local_junk_history "$TEAM")
+  local n
+  n=$(cat "$CONFLICT_STATE" 2>/dev/null || echo 0)
+  local already_rebased=0
+  if [ "$healed" = 1 ] && [ "$n" -ge "$MAX_CONFLICT_ATTEMPTS" ]; then
+    # Codex review of aea244e, blocking finding 3: cleaning junk out of local history is not
+    # proof the park itself was junk-caused - a genuine content conflict that also happened to
+    # carry junk must stay parked. Only a real rebase attempt can tell the two apart, so
+    # re-attempt it for real and let ITS outcome decide: success proves it was junk, clear the
+    # latch and carry the already-rebased tree into the push below; failure proves a genuine
+    # conflict (or something else) survives, so the latch is left exactly as it was - no
+    # further attempt is spent probing it - and this cycle stays parked, same as before.
+    if git rebase --quiet --autostash origin/main 2>>"$LOG"; then
+      rm -f "$CONFLICT_STATE"
+      log "cleared a parked conflict after cleaning local history of OS junk; rebase now succeeds cleanly"
+      n=0
+      already_rebased=1
+    else
+      save_conflict_copies
+      git rebase --abort 2>/dev/null || true
+      log "a park at the bound survives cleaning OS junk from local history - a genuine conflict remains; still not retrying until a human intervenes"
+      return 3
+    fi
+  fi
+  if [ "$n" -ge "$MAX_CONFLICT_ATTEMPTS" ]; then   # AC-5: bounded, named constant
+    log "conflict unresolved after $n attempts; not retrying until a human intervenes"
     return 3
   fi
+  if [ "$already_rebased" -eq 0 ]; then
+    # --autostash: a dirty TRACKED file (historically .DS_Store, rewritten by Finder between
+    # commit_local's commit and this rebase) is not a content conflict - it must never be
+    # counted as one. autostash stashes it, rebases cleanly, and restores it after, so only a
+    # real, unresolvable diff against origin/main ever reaches the branch below.
+    if ! git rebase --quiet --autostash origin/main 2>>"$LOG"; then
+      save_conflict_copies
+      git rebase --abort 2>/dev/null || true
+      echo $((n+1)) > "$CONFLICT_STATE"
+      log "CONFLICT parked (attempt $((n+1))/$MAX_CONFLICT_ATTEMPTS); local content retained"
+      return 3
+    fi
+  fi
   rm -f "$CONFLICT_STATE"
+  # Codex review of aea244e, non-blocking finding 6: a rebase that succeeds can still leave the
+  # autostash NOT fully reapplied - if popping it conflicts with the new HEAD, `git rebase
+  # --autostash` still exits 0 (only a warning is printed) and leaves the stash entry behind
+  # instead of dropping it, with the working tree possibly carrying unresolved conflict
+  # markers. Pushing (or letting the next commit_local `git add -A` that) through would be
+  # silent corruption - refuse instead, and say exactly what happened.
+  if [ -n "$(git stash list 2>/dev/null)" ]; then
+    log "the autostash could not be reapplied cleanly after the rebase; local changes are preserved in 'git stash' - refusing to push until a human resolves this"
+    return 1
+  fi
   local fetch_url push_url
   fetch_url=$(git remote get-url origin 2>/dev/null) || { log "team remote missing"; return 1; }
   while IFS= read -r push_url; do
