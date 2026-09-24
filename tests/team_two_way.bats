@@ -55,7 +55,11 @@ make_colleague_edit() {   # $1 = filename, $2 = content
 @test "an offline edit reaches the team the moment the network comes back" {
   echo "written offline" > "$TEAM/offline.txt"
   git -C "$TEAM" add -A; git_commit "$TEAM" offline   # commit_local's job in a real cycle; done here for a focused test
+  # team_online() (lib/sync.sh) probes team/'s own origin now, not ONLINE_CHECK_REMOTE (the
+  # mirror probe) - simulate a genuinely offline Mac by taking team/'s own remote away too.
+  simulate_team_remote_down
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/no-such-remote" run_sync_cycle
+  restore_team_remote
   [ "$(git -C "$TEAM" rev-list --count origin/main..HEAD)" -eq 1 ]
 
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle

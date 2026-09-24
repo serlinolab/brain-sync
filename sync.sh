@@ -67,14 +67,31 @@ if [ "$commit_rc" -eq 1 ]; then
   exit 1
 fi
 stale_check
-if ! online; then
+# Codex review of aea244e, blocking finding 1: the mirror and team/ each have their own remote
+# and their own deploy key, so each is probed independently below (online()/team_online(),
+# lib/sync.sh) - a mirror-only outage must never stop team/ from syncing, and vice versa. The
+# blanket "offline" verdict is reserved for the case both probes genuinely fail.
+mirror_up=1
+online || mirror_up=0
+team_up=1
+team_online || team_up=0
+if [ "$mirror_up" -eq 0 ] && [ "$team_up" -eq 0 ]; then
   log "offline; local work is committed, nothing more to do this cycle"
   update_attention_marker
   exit 0
 fi
-sync_mirror
-cycle_rc=$?
-sync_team || cycle_rc=$?
+cycle_rc=0
+if [ "$mirror_up" -eq 1 ]; then
+  sync_mirror
+  cycle_rc=$?
+else
+  log "mirror unreachable this cycle (network or key); skipping mirror sync"
+fi
+if [ "$team_up" -eq 1 ]; then
+  sync_team || cycle_rc=$?
+else
+  log "team unreachable this cycle (network or key); skipping team sync"
+fi
 what_changed
 update_attention_marker
 exit "$cycle_rc"

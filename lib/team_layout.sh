@@ -54,4 +54,52 @@ team_add_exclude_pathspecs(){
     printf ':(exclude,glob,icase)**/%s\n' "$name"
     printf ':(exclude,glob,icase)**/%s/**\n' "$name"
   done
+  local p
+  for p in "${TEAM_OS_JUNK_FILE_PATTERNS[@]}"; do
+    printf ':(exclude,glob,icase)**/%s\n' "$p"
+  done
+  for p in "${TEAM_OS_JUNK_DIR_NAMES[@]}"; do
+    printf ':(exclude,glob,icase)**/%s\n' "$p"
+    printf ':(exclude,glob,icase)**/%s/**\n' "$p"
+  done
+}
+
+# 2026-09-24 live incident: Finder (and Time Machine/iCloud) write/rewrite these into any
+# folder they touch, on their own schedule, forever. Tracking any of them makes team/'s
+# working tree "dirty" again the instant it is cleaned, which is what turned an ordinary sync
+# cycle into a permanently-dirty tree and then a false rebase "conflict" (lib/sync.sh's
+# sync_team). Two arrays, not one: FILE_PATTERNS are files (globs like `._*`/`*.icloud` never
+# denote a directory); DIR_NAMES are directories Finder/Time Machine create, which - like
+# TEAM_INSTRUCTION_NAMES above - need their own `/**` descendant exclude for the pathspec
+# forms below (`.git/info/exclude`'s gitignore syntax already covers a directory's contents by
+# excluding the directory itself, so this split only matters there). lib/sync.sh's
+# heal_local_junk_history and commit_local, and team_add_exclude_pathspecs above, all read
+# these SAME lists so none of them can drift from what is actually excluded.
+TEAM_OS_JUNK_FILE_PATTERNS=(.DS_Store '._*' 'Icon?' '*.icloud')
+TEAM_OS_JUNK_DIR_NAMES=(.AppleDouble .Spotlight-V100 .Trashes .fseventsd)
+
+# `.git/info/exclude` is per-clone and local-only - unlike a tracked .gitignore, a colleague's
+# push can never edit or override it. Regenerated every cycle (both by a fresh setup, via
+# complete_setup, and by an already-set-up Mac's own sync cycle, via commit_local) so existing
+# Macs heal themselves without waiting for a fresh clone.
+write_team_exclude(){
+  local team="$1"
+  mkdir -p "$team/.git/info" || return 1
+  local p
+  { for p in "${TEAM_OS_JUNK_FILE_PATTERNS[@]}" "${TEAM_OS_JUNK_DIR_NAMES[@]}"; do printf '%s\n' "$p"; done; } > "$team/.git/info/exclude"
+}
+
+# Pathspecs for `git rm`/`git log`/`git diff` (porcelain plumbing, not the exclude file's
+# gitignore syntax) - matches at any depth, case-insensitively (a Mac's filesystem is
+# case-insensitive by default), and for a directory name also matches everything underneath it
+# (a bare `**/name` pathspec only matches a path ENDING in `name`, unlike a gitignore pattern).
+team_os_junk_pathspecs(){
+  local p
+  for p in "${TEAM_OS_JUNK_FILE_PATTERNS[@]}"; do
+    printf ':(glob,icase)**/%s\n' "$p"
+  done
+  for p in "${TEAM_OS_JUNK_DIR_NAMES[@]}"; do
+    printf ':(glob,icase)**/%s\n' "$p"
+    printf ':(glob,icase)**/%s/**\n' "$p"
+  done
 }

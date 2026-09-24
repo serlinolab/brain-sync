@@ -59,11 +59,22 @@ make_fake_team_repo() {
   git -C "$TEAM" config core.hooksPath "$TEAM/.git/hooks"
   git -C "$TEAM" config core.symlinks false
   configure_team_sparse_checkout
+  # shellcheck source=../lib/team_layout.sh
+  source "$REPO_ROOT/lib/team_layout.sh"
+  write_team_exclude "$TEAM"
   install_test_team_hooks "$STATE/engine/lib"
   date -u +%FT%TZ > "$STATE/team-configured"
 }
 make_fake_mirror() { mkdir -p "$ROOT"; seed_repo "$BRAIN_ROOT/origin-mirror.git" "$MIRROR" sub/file.txt; ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git"; export ONLINE_CHECK_REMOTE; run_sync_cycle; }
 make_local_ahead_change() { echo 'unsent note' >> "$TEAM/note.txt"; }
+
+# team_online() (lib/sync.sh) now probes team/'s OWN real origin, not ONLINE_CHECK_REMOTE - so
+# simulating a fully offline Mac (both remotes down, not just the mirror) means genuinely
+# taking team/'s bare origin away too, not just overriding ONLINE_CHECK_REMOTE. Restore with
+# restore_team_remote before anything in the same test needs team/ reachable again; teardown's
+# BRAIN_ROOT wipe cleans it up either way if a test never restores it.
+simulate_team_remote_down() { mv "$BRAIN_ROOT/origin-team.git" "$BRAIN_ROOT/origin-team.git.moved"; }
+restore_team_remote() { mv "$BRAIN_ROOT/origin-team.git.moved" "$BRAIN_ROOT/origin-team.git"; }
 run_sync_cycle() { bash "$REPO_ROOT/sync.sh"; }
 
 make_fake_brain_sync_origin() {
@@ -96,6 +107,26 @@ install_test_team_hooks() {
   source "$REPO_ROOT/lib/secretscan.sh"
   install_team_hooks "$TEAM" "${1:-$REPO_ROOT/lib}"
 }
+
+# A second Mac's own team/ clone against the SAME origin-team.git bare remote as $TEAM - for
+# tests that need two real Macs syncing concurrently (2026-09-24 OS-junk/dirty-tree incident).
+# Sets ROOT2/STATE2/TEAM2. Run a cycle on it with `run_second_mac_sync_cycle` -
+# ONLINE_CHECK_REMOTE/EXPECTED_TEAM_REMOTE/EXPECTED_MIRROR_REMOTE stay whatever the test
+# already exported (process-wide), since both Macs point at the same real remotes.
+setup_second_team_clone() {
+  ROOT2="$(mktemp -d)"; export ROOT2
+  STATE2="$ROOT2/.state"; TEAM2="$ROOT2/team"; export STATE2 TEAM2
+  mkdir -p "$STATE2/engine/lib"
+  printf 'karl\n' > "$STATE2/person"
+  cp "$REPO_ROOT/lib/secretscan.sh" "$STATE2/engine/lib/secretscan.sh"
+  git clone -q "$BRAIN_ROOT/origin-team.git" "$TEAM2"
+  git -C "$TEAM2" config core.hooksPath "$TEAM2/.git/hooks"
+  git -C "$TEAM2" config core.symlinks false
+  ( TEAM="$TEAM2" configure_team_sparse_checkout )
+  ( TEAM="$TEAM2" install_test_team_hooks "$STATE2/engine/lib" )
+  date -u +%FT%TZ > "$STATE2/team-configured"
+}
+run_second_mac_sync_cycle() { BRAIN_ROOT="$ROOT2" bash "$REPO_ROOT/sync.sh"; }
 
 break_origin_sync_sh() {
   printf '#!/bin/bash\nexit 1\n' > "$BRAIN_SYNC_WORK/sync.sh"

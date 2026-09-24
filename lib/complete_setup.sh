@@ -208,6 +208,7 @@ complete_setup() {
     # out as small plain files holding the target text instead of real symlinks.
     git -C "$team" config core.symlinks false || configure_ok=0
     write_team_sparse_checkout "$team" || configure_ok=0
+    write_team_exclude "$team" || configure_ok=0
     install_team_hooks "$team" "$STATE/engine/lib" || configure_ok=0
     if [ "$configure_ok" -eq 1 ] && [ "$team_needs_checkout" -eq 1 ]; then
       git -C "$team" checkout --quiet main || configure_ok=0

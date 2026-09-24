@@ -7,6 +7,7 @@ teardown() { brain_test_teardown; }
 
 @test "a full cycle with the network unavailable still commits locally, before ever reaching the network" {
   make_local_ahead_change
+  simulate_team_remote_down   # team_online() probes team/'s own origin now, not just the mirror
   run_sync_cycle
   run git -C "$TEAM" log -1 --pretty=%s
   [[ "$output" == notes\ * ]] || false

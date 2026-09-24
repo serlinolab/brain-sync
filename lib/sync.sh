@@ -3,6 +3,26 @@
 
 online(){ git ls-remote --exit-code "$ONLINE_CHECK_REMOTE" HEAD >/dev/null 2>&1; }
 
+# Codex review of aea244e, blocking finding 1: ONLINE_CHECK_REMOTE (online() above) probes only
+# the MIRROR's own remote - it defaults to EXPECTED_MIRROR_REMOTE, over the mirror's own deploy
+# key. A single "offline" verdict from that ONE probe used to gate BOTH sync_mirror and
+# sync_team, so a mirror-key-only outage (not yet registered, revoked, or the mirror host down)
+# blocked team/ from syncing even though team/ has its own remote and its own key and was
+# perfectly reachable - the exact shape of the MacBook Air's 13:26 "offline" log line during the
+# 2026-09-24 incident. Probes team/'s ACTUAL configured origin when team/ exists (so a swapped
+# or genuinely broken team remote is still caught for real); before team/ exists (still pending
+# setup) falls back to the expected remote itself, so a brand-new Mac's very first cycles can
+# tell "team key not registered yet" apart from "no network at all".
+team_online(){
+  local remote
+  if [ -d "$TEAM/.git" ]; then
+    remote=$(git -C "$TEAM" remote get-url origin 2>/dev/null) || return 1
+  else
+    remote="$EXPECTED_TEAM_REMOTE"
+  fi
+  git ls-remote --exit-code "$remote" HEAD >/dev/null 2>&1
+}
+
 # MAX-1515 fix 4b: a refused-then-later-swapped repo must never be touched just because it
 # sits at the expected path - every mutating function below re-checks this first. Verifies
 # BOTH the fetch URL and every push URL equal `expected` (a self-consistent fetch==push pair
@@ -110,9 +130,21 @@ commit_local(){
     return 2
   fi
   cd "$TEAM" || return 1
+  # 2026-09-24 incident: heal an already-set-up Mac too, not just a fresh clone -
+  # complete_setup's write_team_exclude only ever runs once, at configure time, so an
+  # already-protected team/ (team_is_protected true, complete_setup skipped entirely) would
+  # otherwise never get it. Regenerating every cycle is one cheap file write.
+  write_team_exclude "$TEAM" || { log "could not write the OS-junk exclude file"; return 1; }
+  # Untrack any OS junk a colleague or an earlier version of this engine already committed -
+  # the exclude file above only stops a NEW untracked file from being added; an already-
+  # tracked one stays "modified" (and the tree "dirty") every time Finder rewrites it. Keeps
+  # the file on disk, only drops it from git's index.
+  local -a junk_specs=()
+  local spec
+  while IFS= read -r spec; do junk_specs+=("$spec"); done < <(team_os_junk_pathspecs)
+  git rm -r --cached --ignore-unmatch -q -- "${junk_specs[@]}" >/dev/null 2>&1 || true
   local big secret rc=0
   local -a exclude_specs=()
-  local spec
   while IFS= read -r spec; do exclude_specs+=("$spec"); done < <(team_add_exclude_pathspecs)
   git add -A -- . "${exclude_specs[@]}" || { log "git add failed"; return 1; }
   while IFS= read -r -d '' big; do
@@ -174,6 +206,50 @@ save_conflict_copies(){
   done < <(git diff --name-only -z --diff-filter=U)
 }
 
+# 2026-09-24 incident, root causes 1+4: heals a Mac whose LOCAL, not-yet-pushed commits
+# already carry OS junk from before this fix existed (Finder rewriting .DS_Store between
+# cycles, committed by the old commit_local). These commits were never pushed - origin/main is
+# untouched by this, nothing is forced, nothing shared is rewritten. Drops the junk from every
+# commit's tree in the unpushed range and prunes any commit left empty by that (one that ONLY
+# ever touched .DS_Store); a commit that also carried a real note change keeps that change,
+# junk stripped out of it. One `git log` once the backlog is clean, so safe to call every
+# cycle. Prints 1 on stdout if it actually rewrote something, 0 otherwise.
+heal_local_junk_history(){
+  local team="$1"
+  git -C "$team" rev-parse --verify -q origin/main >/dev/null 2>&1 || { echo 0; return 0; }
+  local ahead; ahead=$(git -C "$team" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+  [ "$ahead" -gt 0 ] || { echo 0; return 0; }
+  local -a specs=()
+  local spec
+  while IFS= read -r spec; do specs+=("$spec"); done < <(team_os_junk_pathspecs)
+  local touched
+  touched=$(git -C "$team" log --name-only --pretty=format: origin/main..HEAD -- "${specs[@]}" 2>/dev/null | sed '/^$/d')
+  [ -n "$touched" ] || { echo 0; return 0; }
+  log "rewriting $ahead unpushed local commit(s) to drop OS junk before it can reach the team"
+  local filter_script
+  filter_script=$(mktemp) || { echo 0; return 0; }
+  {
+    printf '#!/bin/bash\n'
+    printf 'git rm -r --cached --ignore-unmatch -q --'
+    local p
+    for p in "${specs[@]}"; do printf ' %q' "$p"; done
+    printf '\n'
+  } > "$filter_script"
+  chmod +x "$filter_script"
+  rm -rf "$team/.git/refs/original"   # a stale backup ref from an earlier failed attempt
+  if FILTER_BRANCH_SQUELCH_WARNING=1 git -C "$team" filter-branch -f --prune-empty \
+       --index-filter "$filter_script" -- origin/main..HEAD >>"$LOG" 2>&1; then
+    rm -rf "$team/.git/refs/original"
+    rm -f "$filter_script"
+    log "local history cleaned; real changes kept, junk dropped"
+    echo 1
+  else
+    rm -f "$filter_script"
+    log "could not clean local history of OS junk; leaving it for a human to look at"
+    echo 0
+  fi
+}
+
 sync_team(){
   # MAX-1515 re-review, finding F1b: same $setup_rc check as commit_local above, checked first
   # for the same reason - see its comment there. No separate log line: commit_local already ran
@@ -199,21 +275,84 @@ sync_team(){
     return 2
   fi
   cd "$TEAM" || return 1
+  # Codex review of aea244e, blocking finding 2: fetch BEFORE healing - heal_local_junk_history
+  # bounds its rewrite to `origin/main..HEAD`, and that has to be the FRESH origin/main, not
+  # whatever this clone last knew (possibly long stale, or never fetched at all on a brand-new
+  # clone). Healing against a stale origin/main could rewrite commits that are no longer ahead,
+  # or miss ones that now are. If origin/main is still unknown after a successful fetch, this
+  # cycle does not push at all.
+  local fetch_err
+  if ! fetch_err=$(git fetch --quiet origin 2>&1); then
+    log "team fetch failed: ${fetch_err:-no error output}"
+    return 1
+  fi
+  if ! git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    log "origin/main still unknown after fetch; not pushing this cycle"
+    return 1
+  fi
+  # 2026-09-24 incident: clean any junk-only local history, now bounded by the fresh
+  # origin/main above.
+  local healed; healed=$(heal_local_junk_history "$TEAM")
   local n
   n=$(cat "$CONFLICT_STATE" 2>/dev/null || echo 0)
+  local already_rebased=0
+  # Codex re-review of 0b5862b: captured BEFORE either rebase attempt below - a stash that was
+  # already sitting here for an unrelated reason (a person's own `git stash`, or an earlier
+  # cycle's still-unresolved autostash conflict) must never block THIS push. Only a NEW entry -
+  # one this cycle's own `--autostash` created and then failed to reapply - counts.
+  local stash_before; stash_before=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$healed" = 1 ] && [ "$n" -ge "$MAX_CONFLICT_ATTEMPTS" ]; then
+    # Codex review of aea244e, blocking finding 3: cleaning junk out of local history is not
+    # proof the park itself was junk-caused - a genuine content conflict that also happened to
+    # carry junk must stay parked. Only a real rebase attempt can tell the two apart, so
+    # re-attempt it for real and let ITS outcome decide: success proves it was junk, clear the
+    # latch and carry the already-rebased tree into the push below; failure proves a genuine
+    # conflict (or something else) survives, so the latch is left exactly as it was - no
+    # further attempt is spent probing it - and this cycle stays parked, same as before.
+    if git rebase --quiet --autostash origin/main 2>>"$LOG"; then
+      rm -f "$CONFLICT_STATE"
+      log "cleared a parked conflict after cleaning local history of OS junk; rebase now succeeds cleanly"
+      n=0
+      already_rebased=1
+    else
+      save_conflict_copies
+      git rebase --abort 2>/dev/null || true
+      log "a park at the bound survives cleaning OS junk from local history - a genuine conflict remains; still not retrying until a human intervenes"
+      return 3
+    fi
+  fi
   if [ "$n" -ge "$MAX_CONFLICT_ATTEMPTS" ]; then   # AC-5: bounded, named constant
     log "conflict unresolved after $n attempts; not retrying until a human intervenes"
     return 3
   fi
-  git fetch --quiet origin || { log "team fetch failed (offline?)"; return 1; }
-  if ! git rebase --quiet origin/main 2>>"$LOG"; then
-    save_conflict_copies
-    git rebase --abort 2>/dev/null || true
-    echo $((n+1)) > "$CONFLICT_STATE"
-    log "CONFLICT parked (attempt $((n+1))/$MAX_CONFLICT_ATTEMPTS); local content retained"
-    return 3
+  if [ "$already_rebased" -eq 0 ]; then
+    # --autostash: a dirty TRACKED file (historically .DS_Store, rewritten by Finder between
+    # commit_local's commit and this rebase) is not a content conflict - it must never be
+    # counted as one. autostash stashes it, rebases cleanly, and restores it after, so only a
+    # real, unresolvable diff against origin/main ever reaches the branch below.
+    if ! git rebase --quiet --autostash origin/main 2>>"$LOG"; then
+      save_conflict_copies
+      git rebase --abort 2>/dev/null || true
+      echo $((n+1)) > "$CONFLICT_STATE"
+      log "CONFLICT parked (attempt $((n+1))/$MAX_CONFLICT_ATTEMPTS); local content retained"
+      return 3
+    fi
   fi
   rm -f "$CONFLICT_STATE"
+  # Codex review of aea244e, non-blocking finding 6 (tightened by the re-review of 0b5862b): a
+  # rebase that succeeds can still leave the autostash NOT fully reapplied - if popping it
+  # conflicts with the new HEAD, `git rebase --autostash` still exits 0 (only a warning is
+  # printed) and leaves the stash entry behind instead of dropping it, with the working tree
+  # possibly carrying unresolved conflict markers. Pushing (or letting the next commit_local
+  # `git add -A` that) through would be silent corruption - refuse instead. Compared against
+  # $stash_before (captured above, before either rebase attempt), not bare non-emptiness - an
+  # unrelated pre-existing stash must never trip this or block the push.
+  local stash_after; stash_after=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$stash_after" -gt "$stash_before" ]; then
+    : > "$AUTOSTASH_CONFLICT_STATE"
+    log "the autostash could not be reapplied cleanly after the rebase; local changes are preserved in 'git stash' - refusing to push until a human resolves this"
+    return 1
+  fi
   local fetch_url push_url
   fetch_url=$(git remote get-url origin 2>/dev/null) || { log "team remote missing"; return 1; }
   while IFS= read -r push_url; do
@@ -222,7 +361,11 @@ sync_team(){
       return 1
     fi
   done < <(git remote get-url --push --all origin 2>/dev/null)
-  git push --quiet origin main 2>>"$LOG" || { log "push failed"; return 1; }
+  local push_err
+  if ! push_err=$(git push --quiet origin main 2>&1); then
+    log "push failed: ${push_err:-no error output}"
+    return 1
+  fi
   log "team at $(git rev-parse --short HEAD)"
 }
 
@@ -248,6 +391,17 @@ update_attention_marker(){
       secret_first=$(head -1 "$STATE/secret_rejects")
       printf 'A file looked like it contained a password or access key, so it was kept out of the team folder:\n  %s\nIt is still on this Mac, unchanged. Please tell Max.\n' "$secret_first" > "$MARK"
       return
+    fi
+    # Codex re-review of 0b5862b: re-derived from the real stash list, not trusted as a
+    # standing flag (AC-7) - if a human already ran `git stash pop`/`drop` and the stash is
+    # genuinely gone, this clears itself and falls through to the checks below instead of
+    # claiming a problem that no longer exists.
+    if [ -f "$AUTOSTASH_CONFLICT_STATE" ]; then
+      if [ -n "$(git -C "$TEAM" stash list 2>/dev/null)" ]; then
+        printf 'Some of your local changes could not be automatically reapplied after the last update and are waiting safely in a hidden spot on this Mac.\nNothing was lost - please tell Max so this Mac can be fixed.\n' > "$MARK"
+        return
+      fi
+      rm -f "$AUTOSTASH_CONFLICT_STATE"
     fi
     if [ -f "$CONFLICT_STATE" ] && [ "$(cat "$CONFLICT_STATE")" -gt 0 ]; then
       printf 'A page in the team folder was changed by you and by a colleague at the same time.\nYour version is safe on this Mac.\nPlease tell Max.\n' > "$MARK"
