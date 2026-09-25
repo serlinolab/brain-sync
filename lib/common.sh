@@ -25,6 +25,11 @@ STALE_HOURS="${STALE_HOURS:-4}"
 SETUP_PENDING_ALERT_HOURS="${SETUP_PENDING_ALERT_HOURS:-24}"
 CONFLICT_STATE="$STATE/conflict_attempts"
 MAX_CONFLICT_ATTEMPTS=3          # AC-5: named constant, never a literal in the check
+# Case 7 fix (2026-09-25): origin/main + local HEAD SHAs recorded at the moment a park at the
+# bound survives a retry, so the NEXT cycle can tell "nothing could have changed" (skip, no new
+# conflict copy) from "something moved" (worth a real retry) - see sync_team. Missing/empty
+# (a park recorded before this fix, or a fresh park) always counts as "changed".
+CONFLICT_PARK_SHAS="$STATE/conflict_park_shas"
 CONFLICTS="$STATE/conflicts"      # AC-6: incoming copy of each conflicting file is saved here
 # Codex re-review of 0b5862b: set by sync_team when an autostash it created itself (never a
 # pre-existing, unrelated stash - see the delta check in lib/sync.sh) fails to reapply after a
