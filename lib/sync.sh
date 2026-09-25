@@ -409,15 +409,36 @@ sync_team(){
   # clears the latch and carries the already-rebased tree into the push below; failure (a
   # binary conflict survives auto_rebase_onto_origin) leaves the latch exactly as it was, and
   # this cycle stays parked, same as case 3 always has.
+  #
+  # MAX-1515 re-review (post f36747a): the retry above is unconditional, so a BINARY park -
+  # which auto_rebase_onto_origin can never heal on its own - gets re-attempted, and
+  # re-park-and-save-copies'd, on every single cycle forever (every 5 min via launchd), growing
+  # a new $CONFLICTS directory each time with nothing to show for it. Retry only when origin/main
+  # or local HEAD has actually moved since the last time this parked at the bound; a missing
+  # record (first cycle after this fix, or any park from before it) counts as "changed" so a
+  # genuinely-healable text park still heals on the very next cycle per the comment above.
   if [ "$n" -ge "$MAX_CONFLICT_ATTEMPTS" ]; then   # AC-5: bounded, named constant
+    local origin_sha local_sha recorded_shas
+    origin_sha=$(git rev-parse origin/main 2>/dev/null)
+    local_sha=$(git rev-parse HEAD 2>/dev/null)
+    recorded_shas=$(cat "$CONFLICT_PARK_SHAS" 2>/dev/null || echo "")
+    if [ -n "$recorded_shas" ] && [ "$recorded_shas" = "$origin_sha $local_sha" ]; then
+      log "still parked at the bound; origin/main and local HEAD unchanged since last attempt - not retrying"
+      return 3
+    fi
     if auto_rebase_onto_origin; then
-      rm -f "$CONFLICT_STATE"
+      rm -f "$CONFLICT_STATE" "$CONFLICT_PARK_SHAS"
       log "cleared a parked conflict on retry${healed:+ (local history also cleaned of OS junk)}; rebase now succeeds"
       n=0
       already_rebased=1
     else
-      save_conflict_copies
+      # No save_conflict_copies here: auto_rebase_onto_origin's own loop (line ~335) already
+      # saved the incoming copy of every unmerged file the moment it found them, for this same
+      # attempt - a second call here would either overwrite that (same-second $ts) or, worse,
+      # write a second copy-dir for one attempt if the two calls straddle a second boundary,
+      # both violating "at most one new conflict-copy set per attempt".
       git rebase --abort 2>/dev/null || true
+      echo "$origin_sha $local_sha" > "$CONFLICT_PARK_SHAS"
       log "a park at the bound survives a fresh attempt - a genuine (binary) conflict remains; still not retrying until a human intervenes"
       return 3
     fi
@@ -429,14 +450,15 @@ sync_team(){
     # real, unresolvable (binary) conflict against origin/main ever reaches the branch below -
     # a text conflict is auto-merged by auto_rebase_onto_origin instead (case 1/4/5/6).
     if ! auto_rebase_onto_origin; then
-      save_conflict_copies
+      # See the comment above: auto_rebase_onto_origin already saved the incoming copy for
+      # this attempt's unmerged files, so no second save_conflict_copies call here either.
       git rebase --abort 2>/dev/null || true
       echo $((n+1)) > "$CONFLICT_STATE"
       log "CONFLICT parked (attempt $((n+1))/$MAX_CONFLICT_ATTEMPTS); local content retained"
       return 3
     fi
   fi
-  rm -f "$CONFLICT_STATE"
+  rm -f "$CONFLICT_STATE" "$CONFLICT_PARK_SHAS"
   # Codex review of aea244e, non-blocking finding 6 (tightened by the re-review of 0b5862b): a
   # rebase that succeeds can still leave the autostash NOT fully reapplied - if popping it
   # conflicts with the new HEAD, `git rebase --autostash` still exits 0 (only a warning is

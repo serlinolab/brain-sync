@@ -8,6 +8,7 @@ brain_test_setup() {
   PERSONAL="$ROOT/personal"; MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
   LOCK="$STATE/run.lock"; LOG="$STATE/sync.log"; CONFLICT_STATE="$STATE/conflict_attempts"
   CONFLICTS="$STATE/conflicts"; QUARANTINE="$STATE/quarantine"
+  CONFLICT_PARK_SHAS="$STATE/conflict_park_shas"
   MAX_CONFLICT_ATTEMPTS=3
   # MAX-1515 fix 4b: the engine checks TEAM/MIRROR's actual origin against these before every
   # mutating operation. Tests never use the real git@brain-team/git@brain-mirror aliases -
@@ -17,6 +18,7 @@ brain_test_setup() {
   EXPECTED_TEAM_REMOTE="$BRAIN_ROOT/origin-team.git"
   EXPECTED_MIRROR_REMOTE="$BRAIN_ROOT/origin-mirror.git"
   export ROOT STATE TEAM MIRROR PERSONAL MARK LOCK LOG CONFLICT_STATE CONFLICTS QUARANTINE MAX_CONFLICT_ATTEMPTS
+  export CONFLICT_PARK_SHAS
   export EXPECTED_TEAM_REMOTE EXPECTED_MIRROR_REMOTE
   mkdir -p "$STATE"
   printf 'testperson\n' > "$STATE/person"   # setup.sh writes this on a real Mac
