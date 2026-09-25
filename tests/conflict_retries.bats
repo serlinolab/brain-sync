@@ -1,9 +1,26 @@
 #!/usr/bin/env bats
 # AC-5 - regression: at the 300s cadence an unbounded retry runs ~288
 # times a day. The bound must be a named constant, not a buried literal.
+#
+# 2026-09-25 (Max): a TEXT conflict no longer parks at all - it auto-merges (see
+# tests/text_conflict_auto_merge.bats) - so every scenario here that needs to actually stay
+# parked across retries uses a BINARY conflict (case 3: park, exactly as before this feature).
 load 'helpers'
 setup() { brain_test_setup; make_fake_team_repo; }
 teardown() { brain_test_teardown; }
+
+make_binary_divergence() {   # a conflict that can never auto-resolve, however many times retried
+  local other; other="$(mktemp -d)"
+  git clone -q "$BRAIN_ROOT/origin-team.git" "$other"
+  { printf '\x00'; head -c 64 /dev/urandom; } > "$other/note.txt"
+  git -C "$other" add note.txt; git_commit "$other" theirs; git -C "$other" push -q origin main
+  rm -rf "$other"
+  # binary content is compared with cmp against a saved FILE, never via $(cat ...) - a random
+  # NUL byte would otherwise silently truncate a bash command substitution.
+  { printf '\x00'; head -c 64 /dev/urandom; } > "$BRAIN_ROOT/mine.bin"
+  cp "$BRAIN_ROOT/mine.bin" "$TEAM/note.txt"
+  git -C "$TEAM" add note.txt; git_commit "$TEAM" mine
+}
 
 @test "the conflict-retry bound is a named constant, not a literal" {
   grep -n 'MAX_CONFLICT_ATTEMPTS=[0-9]' "$REPO_ROOT/lib/common.sh"
@@ -11,6 +28,7 @@ teardown() { brain_test_teardown; }
 }
 
 @test "conflict retries stop after the bound and park with a visible marker, without counting as another attempt" {
+  make_binary_divergence
   echo "$MAX_CONFLICT_ATTEMPTS" > "$CONFLICT_STATE"
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run bash "$REPO_ROOT/sync.sh"
   [ "$status" -eq 3 ]
@@ -22,25 +40,15 @@ teardown() { brain_test_teardown; }
 # Restored after Max lifted the diff cap. The test above seeds the counter at
 # the bound; this one never touches it - it makes a real divergence, lets the
 # real rebase fail, and checks the counter climbs from nothing and stops.
-make_real_divergence() {
-  local other; other="$(mktemp -d)"
-  git clone -q "$BRAIN_ROOT/origin-team.git" "$other"
-  echo "the team's line" > "$other/note.txt"
-  git -C "$other" add note.txt; git_commit "$other" theirs; git -C "$other" push -q origin main
-  rm -rf "$other"
-  echo "my line" > "$TEAM/note.txt"
-  git -C "$TEAM" add note.txt; git_commit "$TEAM" mine
-}
-
 @test "a real rebase conflict is counted from zero, retained locally, and abandoned at the bound" {
-  make_real_divergence
+  make_binary_divergence
   [ ! -f "$CONFLICT_STATE" ]
 
   for n in 1 2 3; do
     ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run bash "$REPO_ROOT/sync.sh"
     [ "$status" -eq 3 ]
     [ "$(cat "$CONFLICT_STATE")" = "$n" ]
-    [ "$(cat "$TEAM/note.txt")" = "my line" ]   # local content never lost
+    cmp -s "$TEAM/note.txt" "$BRAIN_ROOT/mine.bin"   # local content never lost
     [ -f "$MARK" ]
   done
 

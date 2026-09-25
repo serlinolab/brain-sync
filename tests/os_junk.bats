@@ -116,7 +116,11 @@ teardown() { brain_test_teardown; }
 
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run bash "$REPO_ROOT/sync.sh"
 
-  grep -q "cleared a parked conflict after cleaning local history of OS junk" "$LOG"
+  # 2026-09-25: the retry-at-the-bound path is now shared with the text-conflict auto-merge
+  # feature (case 7) - the log line changed shape but the outcome (latch cleared on retry,
+  # junk cleaned) is the same.
+  grep -q "cleared a parked conflict on retry" "$LOG"
+  grep -q "local history also cleaned of OS junk" "$LOG"
   [ "$status" -eq 0 ]
   [ ! -f "$CONFLICT_STATE" ]
   git -C "$BRAIN_ROOT/origin-team.git" rev-parse main >/dev/null

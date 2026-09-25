@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
-# AC-6 - team/ syncs two-way. A same-line conflict parks locally, saves the incoming copy,
-# and raises a plain-words marker; two edits to different files, and an offline-then-online
-# cycle, both sync cleanly.
+# AC-6 - team/ syncs two-way. A BINARY conflict parks locally, saves the incoming copy, and
+# raises a plain-words marker (2026-09-25, Max: a TEXT conflict no longer parks - it
+# auto-merges instead, see tests/text_conflict_auto_merge.bats); two edits to different files,
+# and an offline-then-online cycle, both sync cleanly.
 load 'helpers'
 setup() { brain_test_setup; make_fake_team_repo; }
 teardown() { brain_test_teardown; }
@@ -15,17 +16,28 @@ make_colleague_edit() {   # $1 = filename, $2 = content
   rm -rf "$other"
 }
 
-@test "a same-line conflict parks locally, saves the incoming copy under conflicts/, and the marker uses plain words" {
-  make_colleague_edit note.txt "the team's line"
-  echo "my line" > "$TEAM/note.txt"
+@test "a binary conflict parks locally, saves the incoming copy under conflicts/, and the marker uses plain words" {
+  # binary content is compared with cmp against saved FILES, never via $(cat ...) - a random
+  # NUL byte in the content would otherwise silently truncate a bash command substitution.
+  local theirs_file="$BRAIN_ROOT/theirs.bin" mine_file="$BRAIN_ROOT/mine.bin"
+  local other; other="$(mktemp -d)"
+  git clone -q "$BRAIN_ROOT/origin-team.git" "$other"
+  { printf '\x00'; head -c 64 /dev/urandom; } > "$theirs_file"
+  cp "$theirs_file" "$other/note.txt"
+  git -C "$other" add note.txt; git_commit "$other" theirs
+  git -C "$other" push -q origin main
+  rm -rf "$other"
+
+  { printf '\x00'; head -c 64 /dev/urandom; } > "$mine_file"
+  cp "$mine_file" "$TEAM/note.txt"
   git -C "$TEAM" add note.txt; git_commit "$TEAM" mine
 
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run bash "$REPO_ROOT/sync.sh"
 
-  [ "$(cat "$TEAM/note.txt")" = "my line" ]   # local content wins on disk
+  cmp -s "$TEAM/note.txt" "$mine_file"   # local content wins on disk
   local saved; saved=$(find "$CONFLICTS" -name note.txt 2>/dev/null | head -1)
   [ -n "$saved" ]
-  [ "$(cat "$saved")" = "the team's line" ]
+  cmp -s "$saved" "$theirs_file"
   grep -q "changed by you and by a colleague" "$MARK"
   ! grep -qi 'rebase\|merge\|conflict' "$MARK"   # plain words, no git vocabulary
 }

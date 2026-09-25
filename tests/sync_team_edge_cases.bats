@@ -4,17 +4,24 @@ load 'helpers'
 setup() { brain_test_setup; make_fake_team_repo; }
 teardown() { brain_test_teardown; }
 
-@test "a genuine same-line conflict plus junk in local history stays parked; both versions are kept and the attention file is raised" {
-  # colleague pushes a conflicting edit to the SAME line
+@test "a genuine BINARY conflict plus junk in local history stays parked; both versions are kept and the attention file is raised" {
+  # colleague pushes a conflicting edit to the SAME file - binary, so it can never auto-merge
+  # (2026-09-25, Max: a TEXT same-line conflict no longer parks here - see the "heals" test
+  # below, which is this exact same shape with a text file instead)
+  # binary content is compared with cmp against saved FILES, never via $(cat ...) - a random
+  # NUL byte in the content would otherwise silently truncate a bash command substitution.
+  local theirs_file="$BRAIN_ROOT/theirs.bin" mine_file="$BRAIN_ROOT/mine.bin"
   local other; other="$(mktemp -d)"
   git clone -q "$BRAIN_ROOT/origin-team.git" "$other"
-  echo "the team's line" > "$other/note.txt"
+  { printf '\x00'; head -c 64 /dev/urandom; } > "$theirs_file"
+  cp "$theirs_file" "$other/note.txt"
   git -C "$other" add note.txt; git_commit "$other" theirs
   git -C "$other" push -q origin main
   rm -rf "$other"
 
   # our own unpushed history: a real, conflicting edit PLUS tracked junk
-  echo "my line" > "$TEAM/note.txt"
+  { printf '\x00'; head -c 64 /dev/urandom; } > "$mine_file"
+  cp "$mine_file" "$TEAM/note.txt"
   git -C "$TEAM" add note.txt; git_commit "$TEAM" mine
   echo 'junk' > "$TEAM/.DS_Store"; git -C "$TEAM" add -f .DS_Store; git_commit "$TEAM" 'tracked junk too'
 
@@ -24,11 +31,41 @@ teardown() { brain_test_teardown; }
 
   [ "$status" -eq 3 ]
   [ "$(cat "$CONFLICT_STATE")" = "$MAX_CONFLICT_ATTEMPTS" ]   # latch untouched - never cleared
-  [ "$(cat "$TEAM/note.txt")" = "my line" ]                    # local content retained
-  git -C "$BRAIN_ROOT/origin-team.git" show main:note.txt | grep -q "the team's line"   # remote untouched
-  grep -q "a genuine conflict remains" "$LOG"
+  cmp -s "$TEAM/note.txt" "$mine_file"                         # local content retained
+  git -C "$BRAIN_ROOT/origin-team.git" show main:note.txt > "$BRAIN_ROOT/remote-after.bin"
+  cmp -s "$BRAIN_ROOT/remote-after.bin" "$theirs_file"          # remote untouched
+  grep -q "a genuine (binary) conflict remains" "$LOG"
   [ -f "$MARK" ]
   ! git -C "$TEAM" ls-files --error-unmatch .DS_Store >/dev/null 2>&1   # junk still cleaned locally though
+}
+
+# Case 7: the exact same shape as the test above (parked at the bound, junk in local history),
+# but the conflict itself is TEXT - the live 2026-09-24 incident (team/serlinolab-background.md
+# on the MacBook Air) is this scenario. Reproduces "healing an existing latch": a Mac already
+# sitting at MAX_CONFLICT_ATTEMPTS from before this feature existed must resolve on its very
+# next cycle, since a text conflict now always auto-merges.
+@test "a Mac parked at the bound by a TEXT-only conflict heals on the next cycle: latch clears, both versions kept, no attention file, and it pushes" {
+  local other; other="$(mktemp -d)"
+  git clone -q "$BRAIN_ROOT/origin-team.git" "$other"
+  echo "the team's line" > "$other/note.txt"
+  git -C "$other" add note.txt; git_commit "$other" theirs
+  git -C "$other" push -q origin main
+  rm -rf "$other"
+
+  echo "my line" > "$TEAM/note.txt"
+  git -C "$TEAM" add note.txt; git_commit "$TEAM" mine
+
+  echo "$MAX_CONFLICT_ATTEMPTS" > "$CONFLICT_STATE"   # parked at the bound from before this fix
+
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run bash "$REPO_ROOT/sync.sh"
+
+  [ "$status" -eq 0 ]
+  [ ! -f "$CONFLICT_STATE" ]
+  [ ! -f "$MARK" ]
+  grep -q "cleared a parked conflict on retry" "$LOG"
+  local remote; remote=$(git -C "$BRAIN_ROOT/origin-team.git" show main:note.txt)
+  grep -qF "my line" <<<"$remote"
+  grep -qF "the team's line" <<<"$remote"
 }
 
 @test "heal_local_junk_history is bounded by a FRESH origin/main, established by THIS cycle's own fetch" {

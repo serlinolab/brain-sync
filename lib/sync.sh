@@ -250,6 +250,105 @@ heal_local_junk_history(){
   fi
 }
 
+# 2026-09-25 (Max): auto-merge a TEXT conflict instead of parking - the incident that put the
+# MacBook Air's team/serlinolab-background.md stuck since 2026-09-24 was two people editing the
+# same note, not a genuine irreconcilable change. Appends one plain-language line so
+# what_changed() can report it; the caller still owns saving the incoming copy
+# (save_conflict_copies) and deciding what "binary" means (git's own judgement, never an
+# extension list - see is_conflict_binary below).
+team_note(){ printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$STATE/team_changes.log"; }
+
+# Case 2: text vs binary is git's own call, not ours - a file is binary when `git diff
+# --numstat` between the two conflicting blobs prints "-" for the added/deleted columns
+# (git's standard heuristic: a NUL byte in the content, or an explicit .gitattributes
+# `binary`/`-diff`). No file-extension list anywhere.
+is_conflict_binary(){
+  local b2="$1" b3="$2" added
+  added=$(git diff --numstat "$b2" "$b3" 2>/dev/null | cut -f1)
+  [ "$added" = "-" ]
+}
+
+# Resolves ONE conflicted path already staged at git conflict stages 1/2/3 ($path). Returns 0
+# when resolved (git-added, ready for `rebase --continue`) and 1 when it is a binary conflict
+# the caller must abort and park instead (case 3/6). Stage 2 is the side being rebased onto
+# (origin/main); stage 3 is the local commit being replayed - same convention
+# save_conflict_copies already documents above.
+resolve_conflict_file(){
+  local path="$1" b1 b2 b3
+  b1=$(git rev-parse -q --verify ":1:$path" 2>/dev/null) || b1=""
+  b2=$(git rev-parse -q --verify ":2:$path" 2>/dev/null) || b2=""
+  b3=$(git rev-parse -q --verify ":3:$path" 2>/dev/null) || b3=""
+  if [ -z "$b2" ] && [ -z "$b3" ]; then
+    # delete/delete - already gone on both sides
+    git rm -q -f -- "$path" >/dev/null 2>&1 || rm -f -- "$path"
+    return 0
+  fi
+  if [ -z "$b2" ] || [ -z "$b3" ]; then
+    # Case 5: modify/delete - never lose content, keep whichever side still has the file.
+    mkdir -p "$(dirname "$path")"
+    if [ -n "$b2" ]; then git show ":2:$path" > "$path"; else git show ":3:$path" > "$path"; fi
+    git add -- "$path" || return 1
+    team_note "$path was removed on one side and changed on the other; the changed version was kept."
+    return 0
+  fi
+  if is_conflict_binary "$b2" "$b3"; then
+    return 1   # Case 3: binary - caller aborts the whole rebase and parks, exactly as today.
+  fi
+  # Case 1/4: text (add/add falls in here too, with an empty base) - union-merge so every
+  # line from both sides survives.
+  local base_file theirs_file
+  base_file=$(mktemp) || return 1
+  theirs_file=$(mktemp) || { rm -f "$base_file"; return 1; }
+  if [ -n "$b1" ]; then git show ":1:$path" > "$base_file"; else : > "$base_file"; fi
+  git show ":3:$path" > "$theirs_file"
+  git show ":2:$path" > "$path"
+  mkdir -p "$(dirname "$path")"
+  git merge-file --union "$path" "$base_file" "$theirs_file" >/dev/null 2>&1
+  rm -f "$base_file" "$theirs_file"
+  git add -- "$path" || return 1
+  team_note "Two people edited $path at the same time; both versions were kept in the file."
+  return 0
+}
+
+_rebase_in_progress(){
+  local d
+  d=$(git rev-parse --git-path rebase-merge 2>/dev/null) && [ -d "$d" ] && return 0
+  d=$(git rev-parse --git-path rebase-apply 2>/dev/null) && [ -d "$d" ] && return 0
+  return 1
+}
+
+# Case 6: a rebase of several local commits where more than one step conflicts - loop,
+# resolving each step with resolve_conflict_file, until the rebase finishes. Any binary
+# conflict aborts the WHOLE rebase (git rebase --abort rolls back every already-applied step
+# too, so nothing is partially merged) and reports back to the caller, which parks exactly as
+# it did before this feature existed. Must be called with CWD already in $TEAM.
+auto_rebase_onto_origin(){
+  if git rebase --quiet --autostash origin/main 2>>"$LOG"; then
+    return 0
+  fi
+  _rebase_in_progress || return 1   # failed for a reason that isn't a conflict we can resolve
+  while _rebase_in_progress; do
+    local -a unmerged=()
+    local p
+    while IFS= read -r -d '' p; do unmerged+=("$p"); done < <(git diff --name-only -z --diff-filter=U)
+    [ "${#unmerged[@]}" -gt 0 ] || return 1   # stopped for a reason we don't auto-handle
+    save_conflict_copies   # AC-6: keep the incoming copy regardless of how this step resolves
+    local resolve_failed=0
+    for p in "${unmerged[@]}"; do
+      resolve_conflict_file "$p" || resolve_failed=1
+    done
+    [ "$resolve_failed" -eq 0 ] || return 1
+    # `--continue` exits nonzero both on a genuine failure AND when it simply reaches the NEXT
+    # conflicting commit (exactly like the initial `git rebase` invocation above) - only
+    # _rebase_in_progress tells the two apart. Treating any nonzero as fatal here would abandon
+    # a multi-step rebase (case 6) the moment its second commit also conflicted.
+    if ! GIT_EDITOR=true EDITOR=true git rebase --continue >>"$LOG" 2>&1; then
+      _rebase_in_progress || return 1
+    fi
+  done
+  return 0
+}
+
 sync_team(){
   # MAX-1515 re-review, finding F1b: same $setup_rc check as commit_local above, checked first
   # for the same reason - see its comment there. No separate log line: commit_local already ran
@@ -301,36 +400,35 @@ sync_team(){
   # cycle's still-unresolved autostash conflict) must never block THIS push. Only a NEW entry -
   # one this cycle's own `--autostash` created and then failed to reapply - counts.
   local stash_before; stash_before=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
-  if [ "$healed" = 1 ] && [ "$n" -ge "$MAX_CONFLICT_ATTEMPTS" ]; then
-    # Codex review of aea244e, blocking finding 3: cleaning junk out of local history is not
-    # proof the park itself was junk-caused - a genuine content conflict that also happened to
-    # carry junk must stay parked. Only a real rebase attempt can tell the two apart, so
-    # re-attempt it for real and let ITS outcome decide: success proves it was junk, clear the
-    # latch and carry the already-rebased tree into the push below; failure proves a genuine
-    # conflict (or something else) survives, so the latch is left exactly as it was - no
-    # further attempt is spent probing it - and this cycle stays parked, same as before.
-    if git rebase --quiet --autostash origin/main 2>>"$LOG"; then
+  # Case 7 (2026-09-25, Max): a Mac already parked at the bound must still get a real retry
+  # every cycle, not just when heal_local_junk_history found something to clean - text
+  # conflicts now auto-merge deterministically (auto_rebase_onto_origin), so a park recorded
+  # before this feature existed (or caused by junk, same as before) can heal on the very next
+  # cycle. Codex review of aea244e, blocking finding 3 still holds: only a real rebase attempt
+  # tells "was junk/now-mergeable-text" apart from "genuinely needs a human" (binary) - success
+  # clears the latch and carries the already-rebased tree into the push below; failure (a
+  # binary conflict survives auto_rebase_onto_origin) leaves the latch exactly as it was, and
+  # this cycle stays parked, same as case 3 always has.
+  if [ "$n" -ge "$MAX_CONFLICT_ATTEMPTS" ]; then   # AC-5: bounded, named constant
+    if auto_rebase_onto_origin; then
       rm -f "$CONFLICT_STATE"
-      log "cleared a parked conflict after cleaning local history of OS junk; rebase now succeeds cleanly"
+      log "cleared a parked conflict on retry${healed:+ (local history also cleaned of OS junk)}; rebase now succeeds"
       n=0
       already_rebased=1
     else
       save_conflict_copies
       git rebase --abort 2>/dev/null || true
-      log "a park at the bound survives cleaning OS junk from local history - a genuine conflict remains; still not retrying until a human intervenes"
+      log "a park at the bound survives a fresh attempt - a genuine (binary) conflict remains; still not retrying until a human intervenes"
       return 3
     fi
-  fi
-  if [ "$n" -ge "$MAX_CONFLICT_ATTEMPTS" ]; then   # AC-5: bounded, named constant
-    log "conflict unresolved after $n attempts; not retrying until a human intervenes"
-    return 3
   fi
   if [ "$already_rebased" -eq 0 ]; then
     # --autostash: a dirty TRACKED file (historically .DS_Store, rewritten by Finder between
     # commit_local's commit and this rebase) is not a content conflict - it must never be
     # counted as one. autostash stashes it, rebases cleanly, and restores it after, so only a
-    # real, unresolvable diff against origin/main ever reaches the branch below.
-    if ! git rebase --quiet --autostash origin/main 2>>"$LOG"; then
+    # real, unresolvable (binary) conflict against origin/main ever reaches the branch below -
+    # a text conflict is auto-merged by auto_rebase_onto_origin instead (case 1/4/5/6).
+    if ! auto_rebase_onto_origin; then
       save_conflict_copies
       git rebase --abort 2>/dev/null || true
       echo $((n+1)) > "$CONFLICT_STATE"
@@ -431,8 +529,23 @@ update_attention_marker(){
 }
 
 what_changed(){
-  [ -d "$MIRROR/.git" ] || return 0   # not inside the mirror - clean would delete it
-  { echo "# What changed"; echo
-    git -C "$MIRROR" log -30 --date=short --pretty='- **%ad** %an - %s'
+  local has_mirror=0
+  [ -d "$MIRROR/.git" ] && has_mirror=1
+  # 2026-09-25: team/ auto-merge notes (team_note above) live in their own file, not git
+  # history - team/'s own commits are the person's, not this engine's, to narrate. Still
+  # nothing to report if neither source has anything.
+  [ "$has_mirror" -eq 1 ] || [ -s "$STATE/team_changes.log" ] || return 0
+  {
+    echo "# What changed"; echo
+    if [ "$has_mirror" -eq 1 ]; then
+      git -C "$MIRROR" log -30 --date=short --pretty='- **%ad** %an - %s'
+    fi
+    if [ -s "$STATE/team_changes.log" ]; then
+      echo; echo "## Team folder"; echo
+      local ts msg
+      while IFS=' ' read -r ts msg; do
+        echo "- **${ts%%T*}** $msg"
+      done < <(tail -30 "$STATE/team_changes.log")
+    fi
   } > "$ROOT/what-changed.md"
 }

@@ -62,6 +62,10 @@ use) if you'd want it back after your Mac is lost, stolen, or wiped.
 
 ## If "SOMETHING NEEDS YOUR ATTENTION.txt" appears
 
+If two people write in the same note at the same time, both versions are kept automatically —
+you'll never see this file for that. Only a picture or another file that isn't plain text can
+still need Max's help.
+
 Open it and read it — it explains what's going on in plain language. Your work is never lost when this
 appears, and it stays safely on your Mac either way. Send Max a message and it'll get sorted out.
 
