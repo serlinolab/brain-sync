@@ -45,3 +45,22 @@ load 'helpers'
   run grep -qF "is_active = false" "$REPO_ROOT/docs/runbook.md"
   [ "$status" -eq 0 ]
 }
+
+# Case 10 (2026-09-25): the creator-facing section explains, in plain language and still with
+# no git vocabulary, that a text note is combined automatically and only a non-text file can
+# still need Max.
+@test "the creator-facing section explains that text notes combine automatically and only a non-text file needs Max" {
+  local creator_section
+  creator_section=$(sed -n '1,/^## For Max$/p' "$REPO_ROOT/README.md" | sed '$d')
+  run grep -qi "kept automatically" <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  run grep -qi "isn't plain text\|not plain text\|non-text" <<<"$creator_section"
+  [ "$status" -eq 0 ]
+}
+
+@test "the runbook covers the manual fallback for a parked (binary) conflict" {
+  run grep -qi "conflict_attempts" "$REPO_ROOT/docs/runbook.md"
+  [ "$status" -eq 0 ]
+  run grep -qi "binary" "$REPO_ROOT/docs/runbook.md"
+  [ "$status" -eq 0 ]
+}

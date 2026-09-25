@@ -56,6 +56,29 @@ gh api -X DELETE repos/serlinolab/brain-team/keys/<id>
 gh api -X DELETE repos/serlinolab/Serlinolab-Brain/keys/<id>
 ```
 
+## A parked conflict on a non-text file
+
+A text file (a note, a Markdown page) never parks: two people editing the same note at the
+same time is resolved automatically by unioning both versions' lines (`lib/sync.sh`,
+`resolve_conflict_file` / `auto_rebase_onto_origin`). Only a genuinely binary file (an image, a
+PDF, a video) can still park - `git diff --numstat` between the two conflicting versions
+reports `-` for it (git's own binary detection, not a file-extension list).
+
+When that happens the creator sees "SOMETHING NEEDS YOUR ATTENTION.txt" and both versions are
+kept safely: the local one on disk in `team/`, the incoming one under
+`~/Serlinolab/.state/conflicts/<timestamp>/`. To resolve it by hand:
+
+1. `cd ~/Serlinolab/team` on the creator's Mac (or pull both files off it) and decide which
+   version should win, or rename one so both can be kept side by side.
+2. Put the winning file at its original path in `team/` and delete
+   `~/Serlinolab/.state/conflict_attempts` so the next sync cycle treats it as resolved.
+3. Wait for the next cycle (or run `bash sync.sh` from a checked-out copy of this engine) to
+   confirm it pushes cleanly and the attention file clears itself.
+
+A Mac that was already parked at the retry bound (`MAX_CONFLICT_ATTEMPTS`, `lib/common.sh`)
+for a conflict that turns out to be TEXT heals itself on its very next cycle without any of the
+above - the retry always re-attempts the rebase, and a text conflict always resolves.
+
 ## AC-3 manual check: the brand's rules load automatically
 
 This cannot be verified from an automated test in this repo - it depends on the `claude` CLI
