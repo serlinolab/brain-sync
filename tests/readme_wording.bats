@@ -79,7 +79,12 @@ load 'helpers'
   run grep -qF '"get started"' <<<"$creator_section"
   [ "$status" -eq 0 ]
   run grep -qF 'Trust workspace' <<<"$creator_section"
+  [ "$status" -eq 0 ]  # Where it is when the Desktop shortcut never arrived (macOS may refuse that one write).
+  run grep -qF 'Applications folder inside your home' <<<"$creator_section"
   [ "$status" -eq 0 ]
+  # "after setup" used to promise no approvals at all, while the trust click is every time.
+  run grep -qi 'approve anything after setup' <<<"$creator_section"
+  [ "$status" -ne 0 ]
 }
 
 @test "the runbook says how to rebuild the launcher" {

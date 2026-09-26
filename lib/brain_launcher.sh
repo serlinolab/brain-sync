@@ -11,6 +11,11 @@
 CLAUDE_APP="${CLAUDE_APP:-/Applications/Claude.app}"
 BRAIN_LAUNCHER_NAME="Serlino Brain"
 BRAIN_LAUNCHER_PROMPT="get started"
+# The script an app was built from, kept as an extended attribute on the bundle so the every-
+# cycle check is one read, not a decompile. Not a file inside the bundle: osacompile signs the
+# app, and any file added under Contents/ breaks that seal ("a sealed resource is missing or
+# invalid"); an attribute on the bundle folder leaves `codesign --verify --strict` passing.
+BRAIN_LAUNCHER_STAMP_ATTR="com.serlinolab.launcher-script"
 
 # Percent-encodes every byte except RFC 3986's unreserved characters. Byte-wise through od,
 # because bash 3.2's `printf "'c"` reports a byte above 0x7F as a negative number.
@@ -44,9 +49,9 @@ ensure_brain_launcher(){
   fi
   script=$(brain_launcher_script "$brain")
   if [ -e "$app" ] || [ -L "$app" ]; then
-    # Correct already: nothing to do. Anything else there was not built by this engine (or not
+    # Stamp matches: nothing to do. Anything else there was not built by this engine (or not
     # by this version of it) and is never deleted - moving it to the Trash is how to rebuild.
-    [ "$(osadecompile "$app/Contents/Resources/Scripts/main.scpt" 2>/dev/null)" = "$script" ] \
+    [ "$(xattr -p "$BRAIN_LAUNCHER_STAMP_ATTR" "$app" 2>/dev/null)" = "$script" ] \
       || log "$app is not the launcher this engine builds; leaving it alone"
     return 0
   fi
@@ -54,13 +59,27 @@ ensure_brain_launcher(){
   # Built beside its final name and moved into place, so a failed build never leaves a
   # half-made app that the check above would then refuse to replace.
   tmp="$HOME/Applications/.$BRAIN_LAUNCHER_NAME.building.$$.app"
-  if osacompile -o "$tmp" -e "$script" >/dev/null 2>&1 && mv "$tmp" "$app"; then
-    log "built the Serlino Brain launcher at $app"
-  else
+  if ! osacompile -o "$tmp" -e "$script" >/dev/null 2>&1 \
+     || ! xattr -w "$BRAIN_LAUNCHER_STAMP_ATTR" "$script" "$tmp" 2>/dev/null; then
     rm -rf "$tmp"
     log "could not build the Serlino Brain launcher"
     return 0
   fi
+  # Both callers hold the sync lock, so nothing should race this. Belt and braces anyway: BSD mv
+  # has no "never into a folder" flag, and onto an app that appeared meanwhile it would put the
+  # temp app INSIDE that bundle. Re-check right before the move, and if a winner still slipped
+  # in, take our own temp back out of it - never touching anything else in there.
+  if [ -e "$app" ] || [ -L "$app" ] || ! mv "$tmp" "$app"; then
+    rm -rf "$tmp"
+    log "the Serlino Brain launcher appeared while building; keeping the one already there"
+    return 0
+  fi
+  if [ -e "$app/${tmp##*/}" ]; then
+    rm -rf "${app:?}/${tmp##*/}"
+    log "the Serlino Brain launcher appeared while building; keeping the one already there"
+    return 0
+  fi
+  log "built the Serlino Brain launcher at $app"
   # ponytail: the Desktop shortcut is made only alongside a fresh build and never probed on
   # later cycles - a background job touching ~/Desktop is what can raise a macOS privacy
   # prompt, and a person who deleted the shortcut meant it. The app stays in Applications.

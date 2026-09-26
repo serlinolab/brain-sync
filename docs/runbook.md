@@ -59,6 +59,7 @@ gh api -X DELETE repos/serlinolab/Serlinolab-Brain/keys/<id>
 ## The Serlino Brain launcher
 
 To rebuild it (`lib/brain_launcher.sh`), move `~/Applications/Serlino Brain.app` to the Trash; the next sync cycle builds a fresh one and a new Desktop shortcut - so while the sync job runs it cannot be removed for good, only the Desktop shortcut can (that one is never recreated while the app is there).
+On a Mac set up before the launcher shipped, the first build comes from the background job, and macOS guards `~/Desktop`: that one shortcut write may raise a one-time "bash would like to access files in your Desktop folder" prompt, or fail silently (logged in `sync.log`, never retried). The app itself is always in `~/Applications`, which the README points people to.
 
 ## A parked conflict on a non-text file
 

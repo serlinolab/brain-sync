@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
-# The "Serlino Brain" launcher (lib/brain_launcher.sh). osacompile/osadecompile are stubbed, and
-# `open` is stubbed only to prove nothing here ever fires a claude:// link.
+# The "Serlino Brain" launcher (lib/brain_launcher.sh). osacompile is stubbed; osadecompile and
+# `open` are stubbed only to prove a cycle never decompiles and nothing here fires a claude://
+# link. xattr is the real one - the stamp is an extended attribute on the app bundle.
 load 'helpers'
 
 setup() {
@@ -12,7 +13,7 @@ while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift ;; -e) src="$2"; shift ;
 echo called >> "$BRAIN_ROOT/osacompile.log"
 mkdir -p "$out/Contents/Resources/Scripts" && printf '%s' "$src" > "$out/Contents/Resources/Scripts/main.scpt"
 EOF
-  printf '%s\n' '#!/bin/bash' 'cat "$1"' > "$bin/osadecompile"
+  printf '%s\n' '#!/bin/bash' 'echo called >> "$BRAIN_ROOT/osadecompile.log"' > "$bin/osadecompile"
   printf '%s\n' '#!/bin/bash' 'echo "$*" >> "$BRAIN_ROOT/open.log"' > "$bin/open"
   chmod +x "$bin"/*
   PATH="$bin:$PATH"; export PATH
@@ -53,6 +54,29 @@ built_script() { cat "$APP/Contents/Resources/Scripts/main.scpt"; }
   [ "$(wc -l < "$BRAIN_ROOT/osacompile.log")" -eq 1 ]
   [ "$(find "$HOME/Applications" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]
   [ "$(find "$HOME/Desktop" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]
+}
+
+@test "a steady-state cycle neither decompiles nor rebuilds: one attribute read decides" {
+  ensure_brain_launcher
+  rm -f "$BRAIN_ROOT/osacompile.log"
+  ensure_brain_launcher
+  [ ! -e "$BRAIN_ROOT/osacompile.log" ]
+  [ ! -e "$BRAIN_ROOT/osadecompile.log" ]
+  [ "$(xattr -p com.serlinolab.launcher-script "$APP")" = "$(built_script)" ]
+  run grep -c "not the launcher this engine builds" "$LOG"
+  [ "$output" = 0 ]
+}
+
+@test "a launcher that appears at move time is kept, and the temp app never lands inside it" {
+  # Stands in for another run winning the gap between the absence re-check and the move: the
+  # stubbed mv creates the winner, then BSD mv would put the temp app INSIDE it.
+  printf '%s\n' '#!/bin/bash' 'mkdir -p "$RACE_APP/Contents" && echo winner > "$RACE_APP/Contents/winner"' 'exec /bin/mv "$@"' > "$BRAIN_ROOT/bin/mv"
+  chmod +x "$BRAIN_ROOT/bin/mv"
+  RACE_APP="$APP" ensure_brain_launcher
+  [ "$(cat "$APP/Contents/winner")" = winner ]
+  [ "$(find "$APP" -mindepth 1 -maxdepth 1)" = "$APP/Contents" ]
+  [ -z "$(find "$HOME/Applications" -name '*.building.*')" ]
+  grep -q "appeared while building" "$LOG"
 }
 
 @test "a missing launcher is recreated, and a Desktop shortcut the person removed stays removed" {

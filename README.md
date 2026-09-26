@@ -30,18 +30,21 @@ A folder called `Serlinolab` in your home folder, with:
 From the Brain, Claude also reads what's in your `team/` and `personal/`
 folders — you work in one place, and it sees all three.
 
-You never type a command or approve anything after setup.
+You never type a command after setup. The only thing you ever click is **Trust workspace**
+when you open the Brain (below).
 
 ## Opening the Brain
 
 1. Double-click **Serlino Brain** on your Desktop. You can also drag it to the Dock, so it's
-   always one click away. (It's in your Applications folder too.)
+   always one click away.
 2. Claude opens on the Brain with "get started" already typed in. Press return.
 3. Claude asks **Trust workspace** every time. Click it — that's what switches on the Brain's
    rules.
 
-It needs the Claude app installed. If Serlino Brain isn't on your Desktop yet, give it a few
-minutes after setup, or after you install Claude.
+It needs the Claude app installed, and appears a few minutes after setup (or after you install
+Claude). If it still isn't on your Desktop, it's in the Applications folder inside your home
+folder (the one with your name) — or press ⌘-space and type Serlino Brain. Drag it from there to
+the Dock.
 
 ## Sharing a skill
 
