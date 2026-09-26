@@ -56,6 +56,10 @@ gh api -X DELETE repos/serlinolab/brain-team/keys/<id>
 gh api -X DELETE repos/serlinolab/Serlinolab-Brain/keys/<id>
 ```
 
+## The Serlino Brain launcher
+
+To rebuild it (`lib/brain_launcher.sh`), move `~/Applications/Serlino Brain.app` to the Trash; the next sync cycle builds a fresh one and a new Desktop shortcut - so while the sync job runs it cannot be removed for good, only the Desktop shortcut can (that one is never recreated while the app is there).
+
 ## A parked conflict on a non-text file
 
 A text file (a note, a Markdown page) never parks: two people editing the same note at the

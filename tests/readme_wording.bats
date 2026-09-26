@@ -64,3 +64,25 @@ load 'helpers'
   run grep -qi "binary" "$REPO_ROOT/docs/runbook.md"
   [ "$status" -eq 0 ]
 }
+
+# The "Serlino Brain" launcher (lib/brain_launcher.sh): where it is, what happens, and the
+# "Trust workspace" click Claude asks for every time - without it the Brain's rules stay off.
+@test "the creator-facing section explains opening the Brain and the trust click" {
+  local creator_section
+  creator_section=$(sed -n '1,/^## For Max$/p' "$REPO_ROOT/README.md" | sed '$d')
+  run grep -q '^## Opening the Brain$' <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  run grep -qF 'Double-click **Serlino Brain** on your Desktop' <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  run grep -qi 'drag it to the Dock' <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  run grep -qF '"get started"' <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  run grep -qF 'Trust workspace' <<<"$creator_section"
+  [ "$status" -eq 0 ]
+}
+
+@test "the runbook says how to rebuild the launcher" {
+  run grep -qF 'Serlino Brain.app' "$REPO_ROOT/docs/runbook.md"
+  [ "$status" -eq 0 ]
+}

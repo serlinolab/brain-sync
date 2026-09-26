@@ -32,6 +32,17 @@ folders — you work in one place, and it sees all three.
 
 You never type a command or approve anything after setup.
 
+## Opening the Brain
+
+1. Double-click **Serlino Brain** on your Desktop. You can also drag it to the Dock, so it's
+   always one click away. (It's in your Applications folder too.)
+2. Claude opens on the Brain with "get started" already typed in. Press return.
+3. Claude asks **Trust workspace** every time. Click it — that's what switches on the Brain's
+   rules.
+
+It needs the Claude app installed. If Serlino Brain isn't on your Desktop yet, give it a few
+minutes after setup, or after you install Claude.
+
 ## Sharing a skill
 
 A skill is just an instruction — saving one in `team/` never switches it on

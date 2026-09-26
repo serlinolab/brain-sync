@@ -8,6 +8,7 @@ source "$DIR/lib/secretscan.sh"
 source "$DIR/lib/team_layout.sh"
 source "$DIR/lib/complete_setup.sh"
 source "$DIR/lib/sync.sh"
+source "$DIR/lib/brain_launcher.sh"
 
 # Self-update's smoke test: proves this copy sources cleanly and can run,
 # without touching the lock, network, or any repo.
@@ -59,6 +60,8 @@ else
   complete_setup
   setup_rc=$?
 fi
+# Local only, never fatal: builds the "Serlino Brain" app if it is missing (lib/brain_launcher.sh).
+ensure_brain_launcher
 commit_local
 commit_rc=$?
 if [ "$commit_rc" -eq 1 ]; then

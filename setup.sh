@@ -189,6 +189,13 @@ case $complete_setup_rc in
     ;;
 esac
 
+# The "Serlino Brain" launcher (lib/brain_launcher.sh). Never fails setup: while the Brain folder
+# is still pending, or the Claude app is missing, the background job builds it later.
+# shellcheck source=lib/brain_launcher.sh
+if source "$ENGINE/lib/brain_launcher.sh" 2>/dev/null; then
+  ensure_brain_launcher
+fi
+
 echo "Installing the background sync job..."
 if [ -f "$ENGINE/lib/launcher.sh" ]; then
   install -m 0755 "$ENGINE/lib/launcher.sh" "$STATE/launcher.sh" || setup_ok=0
