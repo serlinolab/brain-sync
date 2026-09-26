@@ -19,6 +19,7 @@ setup_setup_test() {
   # MAX-1515 review finding A: setup.sh now sources $ENGINE/lib/common.sh too, to take the
   # same lock a background sync cycle holds around its own complete_setup call.
   cp "$REPO_ROOT/lib/common.sh" "$work/lib/common.sh"
+  cp "$REPO_ROOT/lib/brain_launcher.sh" "$work/lib/brain_launcher.sh"
   cp -r "$REPO_ROOT/templates/." "$work/templates/"
   git -C "$work" add -A; git -C "$work" -c user.name=fixture -c user.email=fixture@example.com commit -qm engine
   git -C "$work" remote add origin "$BRAIN_ROOT/repos/engine.git"; git -C "$work" push -q origin main
@@ -70,6 +71,7 @@ EOF
   chmod +x "$HOME/bin/git" "$HOME/bin/launchctl"
   export PATH="$HOME/bin:$PATH"
   export BRAIN_SYNC_REMOTE="$BRAIN_ROOT/repos/engine.git"
+  CLAUDE_APP="$BRAIN_ROOT/no-claude-app"; export CLAUDE_APP   # never build a real launcher here
 }
 
 setup() { setup_setup_test; }

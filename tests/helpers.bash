@@ -4,6 +4,9 @@ brain_test_setup() {
   BRAIN_ROOT="$(mktemp -d)"; export BRAIN_ROOT
   HOME="$(mktemp -d)"; export HOME
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/no-such-remote"; export ONLINE_CHECK_REMOTE
+  # Never build a real launcher app from a test cycle, even on a Mac with Claude installed -
+  # tests/brain_launcher.bats points this at a stand-in and stubs the build tools.
+  CLAUDE_APP="$BRAIN_ROOT/no-claude-app"; export CLAUDE_APP
   ROOT="$BRAIN_ROOT"; STATE="$ROOT/.state"; TEAM="$ROOT/team"; MIRROR="$ROOT/Serlinolab_Brain"
   PERSONAL="$ROOT/personal"; MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
   LOCK="$STATE/run.lock"; LOG="$STATE/sync.log"; CONFLICT_STATE="$STATE/conflict_attempts"

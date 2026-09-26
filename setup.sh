@@ -151,15 +151,22 @@ source "$ENGINE/lib/common.sh" || { echo "Sync engine is missing lib/common.sh."
 # this source is for is acquire_lock/cleanup_lock.
 ROOT="$HOME/Serlinolab"; STATE="$ROOT/.state"; LOCK="$STATE/run.lock"; TEAM="$ROOT/team"
 PERSON_SLUG="$(cat "$STATE/person" 2>/dev/null || true)"
+# The "Serlino Brain" launcher (lib/brain_launcher.sh), built under the same lock a sync cycle
+# builds it under, so the two can never race. Only after a complete setup - a pending or refused
+# Brain folder is left to a later sync cycle. Never fails setup: a missing library is a no-op.
+# shellcheck source=lib/brain_launcher.sh
+source "$ENGINE/lib/brain_launcher.sh" 2>/dev/null || ensure_brain_launcher(){ :; }
 complete_setup_rc=1
 if acquire_lock; then
   complete_setup; complete_setup_rc=$?
+  [ "$complete_setup_rc" -ne 0 ] || ensure_brain_launcher
   cleanup_lock
 else
   echo "Setup is already being completed in the background - waiting briefly for it to finish..." >&2
   sleep 2
   if acquire_lock; then
     complete_setup; complete_setup_rc=$?
+    [ "$complete_setup_rc" -ne 0 ] || ensure_brain_launcher
     cleanup_lock
   else
     echo "Setup is still being completed in the background. Nothing more to do here right now." >&2
