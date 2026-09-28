@@ -21,6 +21,9 @@ stub_git_canary() {
   : > "$GIT_CALL_LOG"
   cat > "$HOME/bin/git" <<'EOF'
 #!/bin/bash
+# `git --version` answers like a real git, so a tools-present run gets PAST the check; every
+# other call is logged and fails, which is all these tests need to see git was reached.
+[ "${1:-}" = "--version" ] && { echo "git version 2.39.0"; exit 0; }
 echo "$*" >> "$GIT_CALL_LOG"
 exit 1
 EOF
