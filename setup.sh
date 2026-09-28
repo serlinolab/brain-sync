@@ -44,15 +44,11 @@ xcode_clt_ready(){
   dir=$(xcode-select -p 2>/dev/null) && [ -d "$dir" ] || return 1
   git --version >/dev/null 2>&1
 }
-CLT_INSTALL_MARK="$STATE/xcode-clt-install-started"
 if ! xcode_clt_ready; then
-  if [ -f "$CLT_INSTALL_MARK" ]; then
-    echo "Apple is still installing its developer tools on this Mac. If its window is still open, click Install and wait for it to finish (a few minutes) - then paste the same setup line again." >&2
-  else
-    xcode-select --install >/dev/null 2>&1
-    date -u +%FT%TZ > "$CLT_INSTALL_MARK"
-    echo "Apple is installing its developer tools on this Mac - this only happens once, on a new Mac. A window from Apple just opened: click Install in it, and wait for it to finish (a few minutes). Then paste the same setup line again." >&2
-  fi
+  # Start Apple's install every time: if one is already running, Apple's tool just declines,
+  # and if the person cancelled it, this brings the window back instead of getting stuck.
+  xcode-select --install >/dev/null 2>&1 || true
+  echo "Apple needs to install its developer tools on this Mac - this only happens once, on a new Mac. If a window from Apple is open, click Install and wait for it to finish (a few minutes). Then paste the same setup line again." >&2
   exit "$CLT_MISSING_EXIT_CODE"
 fi
 

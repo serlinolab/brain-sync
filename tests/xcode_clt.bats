@@ -67,16 +67,15 @@ EOF
   [ ! -e "$HOME/Serlinolab/.state/engine" ]
 }
 
-@test "setup: an install already in progress is not fired a second time" {
+@test "setup: a cancelled install is started again on the next run, never stuck" {
   stub_clt_missing
   stub_git_canary
-  mkdir -p "$HOME/Serlinolab/.state"
-  printf 'parker-v2\n' > "$HOME/Serlinolab/.state/layout"
-  date -u +%FT%TZ > "$HOME/Serlinolab/.state/xcode-clt-install-started"
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"still installing"* ]] || false
-  [ ! -s "$INSTALL_CALL_LOG" ]
+  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"click Install"* ]] || false
+  [ "$(wc -l < "$INSTALL_CALL_LOG")" -eq 2 ]
   [ ! -s "$GIT_CALL_LOG" ]
 }
 
@@ -102,4 +101,15 @@ EOF
   stub_git_canary
   run run_sync_cycle
   grep -q . "$GIT_CALL_LOG"
+}
+
+@test "launchd self-update launcher: tools missing skips before any git and never starts the install" {
+  stub_clt_missing
+  stub_git_canary
+  mkdir -p "$HOME/Serlinolab/.state"
+  BRAIN_ROOT="$HOME/Serlinolab" run bash "$REPO_ROOT/lib/launcher.sh"
+  [ "$status" -eq 0 ]
+  [ ! -s "$GIT_CALL_LOG" ]
+  [ ! -s "$INSTALL_CALL_LOG" ]
+  grep -qi "developer tools" "$HOME/Serlinolab/.state/sync.log"
 }
