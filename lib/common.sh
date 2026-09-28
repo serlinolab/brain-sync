@@ -66,6 +66,20 @@ person_warn(){ [ "$PERSON_UNKNOWN" = 1 ] && log "no person recorded in $PERSON_F
 
 log(){ printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$LOG"; }
 
+# On a fresh Mac /usr/bin/git is only a stub until Apple's Command Line Tools (CLT) are
+# installed - calling it pops the "install developer tools?" dialog and fails. `xcode-select -p`
+# is the one Apple-documented probe that reports CLT presence WITHOUT ever triggering that
+# prompt, so it is always safe to call first. A stale path (e.g. a symlink left over after
+# Xcode.app was removed) can still make `-p` report success, so once it does we confirm with
+# `git --version` - safe to call at that point, since the tools are already confirmed present.
+# --- IDENTICAL COPY in lib/common.sh and setup.sh (setup.sh runs before the engine is cloned,
+# so it cannot source this file yet - see setup.sh's own copy for why it is duplicated there).
+xcode_clt_ready(){
+  local dir
+  dir=$(xcode-select -p 2>/dev/null) && [ -d "$dir" ] || return 1
+  git --version >/dev/null 2>&1
+}
+
 # AC-4: mkdir is atomic across processes; a stale lock is renamed atomically.
 # --- lock: IDENTICAL COPY in lib/common.sh and lib/launcher.sh (tests assert byte equality).
 # The launcher must not source engine files, or a broken update could take down its own

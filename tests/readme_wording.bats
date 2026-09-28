@@ -20,12 +20,31 @@ load 'helpers'
 # every sync cycle) once Max has registered the deploy key - the creator pastes the setup line
 # exactly once, ever, and never has to come back to Terminal a second time.
 @test "the creator-facing section sends Max the line once and never asks for a second run" {
-  local creator_section
+  local creator_section without_clt_line
   creator_section=$(sed -n '1,/^## For Max$/p' "$REPO_ROOT/README.md" | sed '$d')
   run grep -qF "Send Max the line starting SERLINO-BRAIN-SETUP" <<<"$creator_section"
   [ "$status" -eq 0 ]
-  run grep -qi 'second time\|second run\|paste.*again\|run it again\|run the.*line again' <<<"$creator_section"
+  # One documented exception: a fresh Mac without Apple's own developer tools genuinely needs
+  # the creator back in Terminal once, because setup cannot even start until that install
+  # finishes - see the dedicated test below. Every OTHER paragraph still promises a single run,
+  # so the "developer tools" line is the only one excluded from this scan.
+  without_clt_line=$(grep -vi "developer tools" <<<"$creator_section")
+  run grep -qi 'second time\|second run\|paste.*again\|run it again\|run the.*line again' <<<"$without_clt_line"
   [ "$status" -ne 0 ]
+}
+
+# The developer-tools exception itself (see setup.sh's xcode_clt_ready check): the one case
+# where the creator is told to paste the setup line again, because a fresh Mac cannot even
+# start setup until Apple's own install finishes.
+@test "the creator-facing section explains the developer-tools install and running setup again" {
+  local creator_section
+  creator_section=$(sed -n '1,/^## For Max$/p' "$REPO_ROOT/README.md" | sed '$d')
+  run grep -qi "developer tools" <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  run grep -qF "click Install" <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  run grep -qi "paste the same setup line again" <<<"$creator_section"
+  [ "$status" -eq 0 ]
 }
 
 # The brain's skills read their data through the MediaBuy connector; setup cannot add it,
