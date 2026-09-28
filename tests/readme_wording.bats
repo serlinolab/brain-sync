@@ -90,4 +90,6 @@ load 'helpers'
 @test "the runbook says how to rebuild the launcher" {
   run grep -qF 'Serlino Brain.app' "$REPO_ROOT/docs/runbook.md"
   [ "$status" -eq 0 ]
+  run grep -qF 'claude-code#92210' "$REPO_ROOT/docs/runbook.md"
+  [ "$status" -eq 0 ]
 }

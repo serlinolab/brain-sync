@@ -27,6 +27,17 @@ teardown() { brain_test_teardown; }
 
 url_decode() { printf '%b' "${1//%/\\x}"; }
 built_script() { cat "$APP/Contents/Resources/Scripts/main.scpt"; }
+brain_real() { (cd "$ROOT/Serlinolab_Brain" && pwd -P); }
+# One click on the built app, minus AppleScript: unwraps the `do shell script "..."` literal
+# (undoing its \" and \\ escapes) and runs the shell exactly as `do shell script` would - /bin/sh
+# - with the stubbed `open` first on PATH, so no claude:// link can ever fire.
+launch_once() {
+  local shell
+  shell=$(built_script | sed -e 's/^do shell script "//' -e 's/"$//' -e 's/\\\(.\)/\1/g')
+  PATH="$BRAIN_ROOT/bin:/usr/bin:/bin" /bin/sh -c "$shell"
+}
+# The folder= value of the Nth link opened so far.
+opened_folder() { sed -n "${1}p" "$BRAIN_ROOT/open.log" | sed -n 's/.*folder=\([^&]*\)&.*/\1/p'; }
 
 @test "a path with spaces and special characters round-trips through the encoding" {
   local path="/Users/Mäx O'Brien & co #1 (100%)/Serlinolab/Serlinolab_Brain" enc
@@ -39,13 +50,56 @@ built_script() { cat "$APP/Contents/Resources/Scripts/main.scpt"; }
 
 @test "the launcher opens Claude on the real Brain folder with get started ready, and lands on the Desktop" {
   ensure_brain_launcher
-  local folder
-  folder=$(built_script | sed -n 's/.*folder=\([^&]*\)&.*/\1/p')
-  [ "$(url_decode "$folder")" = "$(cd "$ROOT/Serlinolab_Brain" && pwd -P)" ]
-  built_script | grep -qF "&q=get%20started'\""
-  built_script | grep -qF "do shell script \"open 'claude://code/new?folder=%2F"
+  [ ! -e "$BRAIN_ROOT/open.log" ]   # building never clicks
+  launch_once
+  [ "$(url_decode "$(opened_folder 1)")" = "$(brain_real)" ]
+  grep -qF 'claude://code/new?folder=' "$BRAIN_ROOT/open.log"
+  grep -qF '&q=get%20started' "$BRAIN_ROOT/open.log"
   [ "$(readlink "$HOME/Desktop/Serlino Brain.app")" = "$APP" ]
-  [ ! -e "$BRAIN_ROOT/open.log" ]
+}
+
+# claude-code#92210: a link whose folder= equals the folder already selected opens a scratch
+# session. Alternating the spelling (with and without a trailing /) sidesteps the comparison.
+@test "consecutive clicks alternate the folder spelling, so no two in a row are equal" {
+  ensure_brain_launcher
+  launch_once; launch_once; launch_once
+  [ "$(url_decode "$(opened_folder 1)")" = "$(brain_real)" ]
+  [ "$(url_decode "$(opened_folder 2)")" = "$(brain_real)/" ]
+  [ "$(url_decode "$(opened_folder 3)")" = "$(brain_real)" ]
+}
+
+@test "missing or unreadable click state falls back to the plain spelling" {
+  ensure_brain_launcher
+  launch_once
+  rm -f "$ROOT/.launcher-last"
+  launch_once
+  [ "$(url_decode "$(opened_folder 2)")" = "$(brain_real)" ]
+  echo garbage > "$ROOT/.launcher-last"
+  launch_once
+  [ "$(url_decode "$(opened_folder 3)")" = "$(brain_real)" ]
+}
+
+@test "the click state lives beside the Brain, never inside it or in team/ or personal/, even on an awkward path" {
+  ROOT="$BRAIN_ROOT/Mäx O'Brien & \"co\" \\ (100%)"; mkdir -p "$ROOT/Serlinolab_Brain" "$ROOT/team" "$ROOT/personal"
+  ensure_brain_launcher
+  launch_once; launch_once
+  [ "$(url_decode "$(opened_folder 1)")" = "$(brain_real)" ]
+  [ "$(url_decode "$(opened_folder 2)")" = "$(brain_real)/" ]
+  [ -f "$ROOT/.launcher-last" ]
+  [ -z "$(find "$ROOT/Serlinolab_Brain" "$ROOT/team" "$ROOT/personal" -mindepth 1)" ]
+}
+
+@test "an app built by the previous launcher version is rebuilt exactly once, then stays steady" {
+  mkdir -p "$APP/Contents"
+  xattr -w com.serlinolab.launcher-script \
+    "do shell script \"open 'claude://code/new?folder=$(brain_url_encode "$(brain_real)")&q=get%20started'\"" "$APP"
+  ensure_brain_launcher
+  [ "$(wc -l < "$BRAIN_ROOT/osacompile.log")" -eq 1 ]
+  [ "$(xattr -p com.serlinolab.launcher-script "$APP")" = "$(built_script)" ]
+  ensure_brain_launcher
+  [ "$(wc -l < "$BRAIN_ROOT/osacompile.log")" -eq 1 ]
+  [ ! -e "$HOME/Desktop/Serlino Brain.app" ]   # a rebuild never brings back a removed shortcut
+  [ -z "$(find "$HOME/Applications" -name '.*')" ]   # no temp or old copy left behind
 }
 
 @test "a second run neither rebuilds nor duplicates the launcher" {
