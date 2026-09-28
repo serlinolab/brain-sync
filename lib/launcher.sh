@@ -67,6 +67,11 @@ acquire_lock(){
 }
 acquire_lock || exit 0
 
+# Without Apple's developer tools, /usr/bin/git is a stub that pops Apple's install dialog.
+# This runs from launchd, so it must never reach git then: skip the cycle and let a person
+# run setup, which can start the install. (Same probe as xcode_clt_ready in lib/common.sh.)
+_clt=$(xcode-select -p 2>/dev/null) && [ -d "$_clt" ] || { log "self-update: Apple developer tools missing, cycle skipped"; exit 0; }
+
 if [ ! -d "$ENGINE/.git" ]; then
   git clone --quiet "$REMOTE" "$ENGINE" >/dev/null 2>&1 || { log "self-update: initial clone failed"; exit 0; }
 fi

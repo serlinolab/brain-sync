@@ -9,6 +9,7 @@ BRAIN_SYNC_REMOTE="${BRAIN_SYNC_REMOTE:-https://github.com/serlinolab/brain-sync
 MIRROR_KEY="$HOME/.ssh/brain_mirror_ed25519"
 TEAM_KEY="$HOME/.ssh/brain_team_ed25519"
 SSH_CONFIG="$HOME/.ssh/config"
+CLT_MISSING_EXIT_CODE=42   # distinct from every other exit in this script - see the CLT check below
 
 # AC-8: refuse BEFORE any mutation when $ROOT exists but was not built by this setup - the
 # MAX-1514 layout (had .state/setup-complete, never wrote .state/layout), the earlier
@@ -28,6 +29,28 @@ printf 'parker-v2\n' > "$LAYOUT_MARK"
 # Recorded once - used to raise "SOMETHING NEEDS YOUR ATTENTION.txt" if setup is still pending
 # after SETUP_PENDING_ALERT_HOURS (lib/sync.sh's update_attention_marker).
 [ -f "$STATE/setup-started" ] || date +%s > "$STATE/setup-started"
+
+# On a fresh Mac /usr/bin/git is only a stub until Apple's Command Line Tools (CLT) are
+# installed - calling it pops the "install developer tools?" dialog and fails, which is exactly
+# what the very next section (cloning the sync engine) would hit with no warning. `xcode-select
+# -p` is the one Apple-documented probe that reports CLT presence WITHOUT ever triggering that
+# prompt, so it is always safe to call first. A stale path (e.g. a symlink left over after
+# Xcode.app was removed) can still make `-p` report success, so once it does we confirm with
+# `git --version` - safe to call at that point, since the tools are already confirmed present.
+# --- IDENTICAL COPY in setup.sh and lib/common.sh. Duplicated on purpose: this runs before the
+# sync engine is cloned, so lib/common.sh is not on disk yet for this script to source.
+xcode_clt_ready(){
+  local dir
+  dir=$(xcode-select -p 2>/dev/null) && [ -d "$dir" ] || return 1
+  git --version >/dev/null 2>&1
+}
+if ! xcode_clt_ready; then
+  # Start Apple's install every time: if one is already running, Apple's tool just declines,
+  # and if the person cancelled it, this brings the window back instead of getting stuck.
+  xcode-select --install >/dev/null 2>&1 || true
+  echo "Apple needs to install its developer tools on this Mac - this only happens once, on a new Mac. If a window from Apple is open, click Install and wait for it to finish (a few minutes). Then paste the same setup line again." >&2
+  exit "$CLT_MISSING_EXIT_CODE"
+fi
 
 PERSON="${BRAIN_PERSON:-}"
 if [ -z "$PERSON" ]; then

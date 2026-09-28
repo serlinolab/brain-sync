@@ -28,6 +28,14 @@ if [ -n "${SYNC_HOLD_RELEASE_FILE:-}" ]; then
 fi
 [ -n "${SYNC_HOLD_SECONDS:-}" ] && sleep "$SYNC_HOLD_SECONDS"
 person_warn
+# Apple's developer tools can be removed after setup (rare, but seen). Every step below this
+# point eventually calls git, which would otherwise pop the install dialog from inside a
+# launchd job with no one watching. Skip the cycle instead - never fire the installer from here,
+# that is setup.sh's job, run by a person who can see and click the dialog.
+if ! xcode_clt_ready; then
+  log "Apple's developer tools are missing on this Mac; skipping this sync cycle"
+  exit 0
+fi
 # MAX-1515 change A, amended by review finding B: finish a pending setup (the deploy key may
 # just have been registered) before doing anything else this cycle. Never trusts
 # $STATE/team-configured or $STATE/setup-complete as proof team/ or Serlinolab_Brain/ are actually
