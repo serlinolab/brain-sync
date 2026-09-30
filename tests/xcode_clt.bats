@@ -78,6 +78,7 @@ EOF
   BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
   [ "$status" -ne 0 ]
   [[ "$output" == *"click Install"* ]] || false
+  [[ "$output" == *"developer.apple.com/download/all"* ]] || false
   [ "$(wc -l < "$INSTALL_CALL_LOG")" -eq 2 ]
   [ ! -s "$GIT_CALL_LOG" ]
 }

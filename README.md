@@ -88,6 +88,7 @@ appears, and it stays safely on your Mac either way. Send Max a message and it'l
 - Setup needs Terminal once; you won't see it again unless something
   needs fixing.
 - On a brand-new Mac, setup may say Apple is installing its own developer tools — if so, click Install, wait a few minutes for it to finish, then paste the same setup line again.
+  If Apple instead says the software is "not currently available", download **Command Line Tools** from https://developer.apple.com/download/all/ (sign in with your Apple ID), install it, then paste the setup line again.
 - If this Mac has never been online since setup, the Serlino brain and the
   team folder may not have arrived yet — they land on first connect.
 

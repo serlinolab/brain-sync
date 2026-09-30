@@ -28,7 +28,7 @@ load 'helpers'
   # the creator back in Terminal once, because setup cannot even start until that install
   # finishes - see the dedicated test below. Every OTHER paragraph still promises a single run,
   # so the "developer tools" line is the only one excluded from this scan.
-  without_clt_line=$(grep -vi "developer tools" <<<"$creator_section")
+  without_clt_line=$(grep -viE "developer tools|Command Line Tools" <<<"$creator_section")
   run grep -qi 'second time\|second run\|paste.*again\|run it again\|run the.*line again' <<<"$without_clt_line"
   [ "$status" -ne 0 ]
 }
