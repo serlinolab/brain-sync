@@ -49,6 +49,7 @@ if ! xcode_clt_ready; then
   # and if the person cancelled it, this brings the window back instead of getting stuck.
   xcode-select --install >/dev/null 2>&1 || true
   echo "Apple needs to install its developer tools on this Mac - this only happens once, on a new Mac. If a window from Apple is open, click Install and wait for it to finish (a few minutes). Then paste the same setup line again." >&2
+  echo "If Apple says the software is \"not currently available from the Software Update server\": open https://developer.apple.com/download/all/ , sign in with your Apple ID, search \"Command Line Tools\", download the newest one for your Mac, open it and install it. Then paste the same setup line again." >&2
   exit "$CLT_MISSING_EXIT_CODE"
 fi
 
