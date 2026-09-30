@@ -11,7 +11,7 @@
 # ever running again. Only set when not already overridden by the environment.
 # A brand-new Mac has never met github.com over SSH, so BatchMode refused every connection with
 # "Host key verification failed" (Oscar's Mac, 2026-09-30). GitHub's published host keys ship
-# with the engine and are checked strictly - no trust-on-first-use - alongside the person's own file.
+# with the engine and are checked strictly - no trust-on-first-use - instead of the person's ~/.ssh/known_hosts (only github.com is ever dialled).
 _BRAIN_GH_HOSTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/github_known_hosts"
 export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\"$_BRAIN_GH_HOSTS\"}"
 ROOT="${BRAIN_ROOT:-$HOME/Serlinolab}"
