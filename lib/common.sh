@@ -9,7 +9,11 @@
 # already-stuck Macs. Setting it here instead reaches every Mac the moment the engine
 # self-updates, for every git network call this process makes, with no dependency on setup.sh
 # ever running again. Only set when not already overridden by the environment.
-export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15}"
+# A brand-new Mac has never met github.com over SSH, so BatchMode refused every connection with
+# "Host key verification failed" (Oscar's Mac, 2026-09-30). GitHub's published host keys ship
+# with the engine and are checked strictly - no trust-on-first-use - alongside the person's own file.
+_BRAIN_GH_HOSTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/github_known_hosts"
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\"$_BRAIN_GH_HOSTS\"}"
 ROOT="${BRAIN_ROOT:-$HOME/Serlinolab}"
 STATE="$ROOT/.state"
 TEAM="$ROOT/team"                 # MAX-1515: two-way, everyone writes
