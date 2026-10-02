@@ -180,3 +180,51 @@ opened_folder() { sed -n "${1}p" "$BRAIN_ROOT/open.log" | sed -n 's/.*folder=\([
   ensure_brain_launcher
   [ ! -e "$APP" ]
 }
+
+# MAX-1629: the "SerlinoLab Brain" menu-bar app has its own Open Brain button. Once it is
+# installed the engine stops building or rebuilding this launcher - and never removes one that
+# is already there: deleting a person's app is the menu-bar app's call (it asks), not a
+# background job's.
+make_menubar_app() {
+  mkdir -p "$HOME/Applications/SerlinoLab Brain.app/Contents"
+  : > "$HOME/Applications/SerlinoLab Brain.app/Contents/Info.plist"
+}
+
+@test "with the menu-bar app installed, no launcher is built and no Desktop shortcut appears" {
+  make_menubar_app
+  ensure_brain_launcher
+  [ ! -e "$APP" ]
+  [ ! -e "$BRAIN_ROOT/osacompile.log" ]
+  [ ! -e "$HOME/Desktop/Serlino Brain.app" ]
+  ! grep -q "launcher" "$LOG" 2>/dev/null
+}
+
+@test "with the menu-bar app installed, an existing launcher is neither rebuilt nor removed" {
+  ensure_brain_launcher
+  xattr -w "$BRAIN_LAUNCHER_STAMP_ATTR" "an older script" "$APP"   # would normally trigger a rebuild
+  rm -f "$BRAIN_ROOT/osacompile.log"
+  make_menubar_app
+  ensure_brain_launcher
+  [ -d "$APP" ]
+  [ "$(xattr -p "$BRAIN_LAUNCHER_STAMP_ATTR" "$APP")" = "an older script" ]
+  [ ! -e "$BRAIN_ROOT/osacompile.log" ]
+}
+
+@test "remove the menu-bar app and the next cycle builds the launcher again" {
+  make_menubar_app
+  ensure_brain_launcher
+  rm -rf "$HOME/Applications/SerlinoLab Brain.app"
+  ensure_brain_launcher
+  [ -d "$APP" ]
+}
+
+@test "an empty or half-copied SerlinoLab Brain.app folder does not switch the launcher off" {
+  mkdir -p "$HOME/Applications/SerlinoLab Brain.app"   # an interrupted drag: no Contents/Info.plist
+  ensure_brain_launcher
+  [ -d "$APP" ]
+}
+
+@test "by default both /Applications and ~/Applications are checked" {
+  run env -u BRAIN_APP_DIRS bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/brain_launcher.sh'; printf '%s' \"\$BRAIN_APP_DIRS\""
+  [ "$output" = "/Applications:$HOME/Applications" ]
+}
