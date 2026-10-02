@@ -36,6 +36,10 @@ if ! xcode_clt_ready; then
   log "Apple's developer tools are missing on this Mac; skipping this sync cycle"
   exit 0
 fi
+# 2026-10-01 incident: ~/.ssh/config lost its two Host blocks, both probes below failed, and 22
+# hours of cycles read "offline". Re-asserted every cycle, before anything dials out. Never
+# fatal: a cycle that cannot write ~/.ssh/config still runs and reports exactly as before.
+ensure_ssh_hosts || log "could not restore ~/.ssh/config Host blocks; continuing"
 # MAX-1515 change A, amended by review finding B: finish a pending setup (the deploy key may
 # just have been registered) before doing anything else this cycle. Never trusts
 # $STATE/team-configured or $STATE/setup-complete as proof team/ or Serlinolab_Brain/ are actually
