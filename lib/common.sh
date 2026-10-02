@@ -84,6 +84,42 @@ xcode_clt_ready(){
   git --version >/dev/null 2>&1
 }
 
+# The two SSH aliases every remote URL in this engine uses (EXPECTED_*_REMOTE above) resolve to
+# github.com only through these ~/.ssh/config blocks. Max's Mac Studio lost both on 2026-10-01
+# (something rewrote the file) with both keys still on disk: every probe failed, and 22 hours
+# of cycles logged "offline". ensure_ssh_hosts puts a missing block back every cycle, but only
+# when its key file exists - a block for a key that is not there is noise, and key creation
+# belongs to setup.sh. Same paths as setup.sh; harmless when setup.sh later sources this file.
+SSH_CONFIG="$HOME/.ssh/config"
+MIRROR_KEY="$HOME/.ssh/brain_mirror_ed25519"
+TEAM_KEY="$HOME/.ssh/brain_team_ed25519"
+# --- append_host: IDENTICAL COPY in lib/common.sh and setup.sh (setup.sh writes the blocks
+# before it sources this file; tests/ssh_hosts.bats asserts the two bodies are equal).
+append_host() {
+  local alias="$1" key="$2"
+  grep -q "^Host $alias$" "$SSH_CONFIG" 2>/dev/null && return 0
+  if [ -s "$SSH_CONFIG" ] && [ "$(tail -c 1 "$SSH_CONFIG" | wc -l)" -eq 0 ]; then
+    printf '\n' >> "$SSH_CONFIG"
+  fi
+  printf 'Host %s\n  HostName github.com\n  User git\n  IdentityFile "%s"\n  IdentitiesOnly yes\n  BatchMode yes\n  ConnectTimeout 15\n' "$alias" "$key" >> "$SSH_CONFIG"
+}
+ensure_ssh_hosts(){
+  # launchd's stderr IS sync.log, so a write failure must come back as a status (sync.sh logs
+  # it in the log's own format), never as raw bash error lines repeated every cycle.
+  local restored="" failed=0
+  if [ -f "$MIRROR_KEY" ] && ! grep -q '^Host brain-mirror$' "$SSH_CONFIG" 2>/dev/null; then
+    if append_host brain-mirror "$MIRROR_KEY" 2>/dev/null; then restored="$restored brain-mirror"; else failed=1; fi
+  fi
+  if [ -f "$TEAM_KEY" ] && ! grep -q '^Host brain-team$' "$SSH_CONFIG" 2>/dev/null; then
+    if append_host brain-team "$TEAM_KEY" 2>/dev/null; then restored="$restored brain-team"; else failed=1; fi
+  fi
+  if [ -n "$restored" ]; then
+    chmod 600 "$SSH_CONFIG" 2>/dev/null || failed=1
+    log "restored ~/.ssh/config Host block(s):$restored"
+  fi
+  return "$failed"
+}
+
 # AC-4: mkdir is atomic across processes; a stale lock is renamed atomically.
 # --- lock: IDENTICAL COPY in lib/common.sh and lib/launcher.sh (tests assert byte equality).
 # The launcher must not source engine files, or a broken update could take down its own
