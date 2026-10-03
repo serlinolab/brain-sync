@@ -72,29 +72,102 @@ acquire_lock(){
 }
 acquire_lock || exit 0
 
+# capability: safe-stop
+# (Read by the SerlinoLab Brain app before it uses `launchctl kickstart -k` on a stuck run.)
+#
+# Every long step (clone, fetch, selfcheck, the cycle itself) runs as a background child that this
+# script WAITS for: bash runs a trap only once a foreground command returns, but interrupts `wait`
+# at once. So TERM (what `kickstart -k` and logout send) stops whatever is running in ANY phase and
+# frees the lock immediately, well inside launchd's 20 s before it would SIGKILL us - a SIGKILLed
+# launcher leaves the lock for LOCK_STALE_SECONDS (MAX-1629, 2026-10-03).
+STOP_GRACE_SECONDS=5
+CHILD_PID=""
+# The pid and all its descendants, children first (collected BEFORE signalling, so a process that
+# outlives its parent is still on the list for the KILL pass).
+tree_pids(){
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do tree_pids "$child"; done
+  printf '%s\n' "$1"
+}
+stop_tree(){
+  local pids p i alive
+  pids=$(tree_pids "$1")
+  for p in $pids; do kill -TERM "$p" 2>/dev/null; done
+  for i in $(seq 1 "$STOP_GRACE_SECONDS"); do
+    alive=""
+    for p in $pids; do kill -0 "$p" 2>/dev/null && { alive=1; break; }; done
+    [ -z "$alive" ] && return 0
+    sleep 1
+  done
+  for p in $pids; do kill -KILL "$p" 2>/dev/null; done
+}
+# Every direct child of this launcher, not just CHILD_PID: a TERM can land between a `&` and the
+# assignment of `$!`, and the watchdog is a child too.
+stop_all(){
+  local child
+  for child in $(pgrep -P $$ 2>/dev/null); do stop_tree "$child"; done
+}
+trap 'stop_all; cleanup_lock; exit 143' TERM
+trap 'stop_all; cleanup_lock; exit 130' INT
+# Runs "$@" as an interruptible child; returns its status.
+run_child(){ "$@" & CHILD_PID=$!; wait "$CHILD_PID"; local rc=$?; CHILD_PID=""; return "$rc"; }
+
 # Without Apple's developer tools, /usr/bin/git is a stub that pops Apple's install dialog.
 # This runs from launchd, so it must never reach git then: skip the cycle and let a person
 # run setup, which can start the install. (Same probe as xcode_clt_ready in lib/common.sh.)
 _clt=$(xcode-select -p 2>/dev/null) && [ -d "$_clt" ] || { log "self-update: Apple developer tools missing, cycle skipped"; exit 0; }
 
 if [ ! -d "$ENGINE/.git" ]; then
-  git clone --quiet "$REMOTE" "$ENGINE" >/dev/null 2>&1 || { log "self-update: initial clone failed"; exit 0; }
+  run_child git clone --quiet "$REMOTE" "$ENGINE" >/dev/null 2>&1 || { log "self-update: initial clone failed"; exit 0; }
 fi
 
 cd "$ENGINE" || exit 0
-prev=$(git rev-parse HEAD 2>/dev/null || echo "")
-if git fetch --quiet origin main 2>/dev/null; then
+# The last commit that passed the selfcheck. Remembered in $STATE, not read off HEAD: a run stopped
+# between `reset --hard` and the end of the selfcheck (now likely - Fix sends kickstart -k) leaves
+# HEAD on an unchecked commit that would then look current forever. No record yet (a Mac before
+# this shipped): today's HEAD is taken as verified, exactly as before.
+VERIFIED_FILE="$STATE/engine-verified"
+prev=$(cat "$VERIFIED_FILE" 2>/dev/null || git rev-parse HEAD 2>/dev/null || echo "")
+if run_child git fetch --quiet origin main 2>/dev/null; then
   new=$(git rev-parse origin/main 2>/dev/null || echo "")
-  if [ -n "$new" ] && [ "$new" != "$prev" ]; then
+  head=$(git rev-parse HEAD 2>/dev/null || echo "")
+  if [ -n "$new" ] && { [ "$new" != "$prev" ] || [ "$head" != "$prev" ]; }; then
     git reset --quiet --hard origin/main
-    if bash -n sync.sh lib/*.sh 2>>"$LOG" && bash sync.sh --selfcheck 2>>"$LOG"; then
-      log "self-update: updated ${prev:-none} -> $new"
+    if bash -n sync.sh lib/*.sh 2>>"$LOG" && run_child bash sync.sh --selfcheck 2>>"$LOG"; then
+      printf '%s\n' "$new" > "$VERIFIED_FILE"
+      [ "$new" != "$prev" ] && log "self-update: updated ${prev:-none} -> $new"
     else
       log "self-update: $new failed selfcheck, restoring ${prev:-none}"
       [ -n "$prev" ] && git reset --quiet --hard "$prev" && git clean -ffdqx
     fi
+  elif [ -n "$prev" ] && [ ! -s "$VERIFIED_FILE" ]; then
+    printf '%s\n' "$prev" > "$VERIFIED_FILE"
   fi
 fi
 
 [ "${1:-}" = "--selfcheck-only" ] && exit 0
-BRAIN_SYNC_LOCK_HELD=1 bash "$ENGINE/sync.sh"
+
+# The cycle, with a watchdog: one still running after CYCLE_TIMEOUT_SECONDS is stopped with
+# everything it started (a dead network call once held a Mac for 51 minutes, and launchd never
+# starts a run while one is alive). Below LOCK_STALE_SECONDS, so the lock is always released by
+# its owner, never broken as stale.
+CYCLE_TIMEOUT_SECONDS="${CYCLE_TIMEOUT_SECONDS:-1200}"
+BRAIN_SYNC_LOCK_HELD=1 bash "$ENGINE/sync.sh" &
+CHILD_PID=$!
+# A subshell resets the traps above, so the watchdog never touches the lock itself.
+(
+  waited=0
+  while kill -0 "$CHILD_PID" 2>/dev/null; do
+    sleep 1; waited=$((waited + 1))
+    if [ "$waited" -ge "$CYCLE_TIMEOUT_SECONDS" ]; then
+      log "stopped a sync cycle still running after $CYCLE_TIMEOUT_SECONDS s"
+      stop_tree "$CHILD_PID"
+      exit 0
+    fi
+  done
+) &
+WATCH_PID=$!
+wait "$CHILD_PID"; rc=$?
+# Not killed: if it fired, it is finishing its KILL pass; otherwise it ends within a second.
+wait "$WATCH_PID" 2>/dev/null
+exit "$rc"
