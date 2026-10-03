@@ -98,3 +98,24 @@ run it on a Mac that is signed in).
 To check by hand: open the Code tab on `~/Serlinolab/Serlinolab_Brain` on a set-up Mac and ask
 the assistant to name the brand. It should answer using whatever is in
 `~/Serlinolab/Serlinolab_Brain/CLAUDE.md`, without being told where to look.
+
+## The SerlinoLab Brain menu-bar app
+
+`lib/menubar_app.sh` installs, updates and keeps running the menu-bar app (MAX-1629, code in
+`serlinolab/brain-app`) from `app/` in this repo. It reaches every Mac with the engine's own git
+self-update, so no browser download is involved: no quarantine, no Gatekeeper prompt, and no trust
+root beyond protected `main` here.
+
+- **Ship a new version:** in brain-app, bump `VERSION`, then `scripts/publish-to-engine.sh ../brain-sync`
+  and open a pull request here with the three changed files in `app/`. After merge, each Mac installs
+  it within one or two cycles. The engine installs only when `app/VERSION` differs from the installed
+  copy's version, and only after `app/SHA256`, the bundle signature and the bundle's own version all check out.
+- **Where it goes:** a copy already in `/Applications` (dragged from the DMG) is updated in place;
+  otherwise `~/Applications`. Never two copies.
+- **Kept running:** started when it isn't running, unless the person quit it from its menu
+  (`~/Serlinolab/.state/app-quit`, removed when the app starts again).
+- **A brand-new Mac** still needs the app or `curl | bash` first, because the engine isn't there yet:
+  send the DMG (brain-app `scripts/build-dmg.sh`) on Slack, not by email (Gmail blocks `.dmg`).
+  That one copy must be unblocked once: System Settings → Privacy & Security → Open Anyway.
+- **Stop distributing it:** delete `app/` here; installed copies stay, nothing new is installed.
+
