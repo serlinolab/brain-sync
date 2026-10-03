@@ -61,6 +61,8 @@ gh api -X DELETE repos/serlinolab/Serlinolab-Brain/keys/<id>
 To rebuild it (`lib/brain_launcher.sh`), move `~/Applications/Serlino Brain.app` to the Trash; the next sync cycle builds a fresh one and a new Desktop shortcut - so while the sync job runs it cannot be removed for good, only the Desktop shortcut can (that one is never recreated while the app is there).
 On a Mac set up before the launcher shipped, the first build comes from the background job, and macOS guards `~/Desktop`: that one shortcut write may raise a one-time "bash would like to access files in your Desktop folder" prompt, or fail silently (logged in `sync.log`, never retried). The app itself is always in `~/Applications`, which the README points people to.
 
+Once the **SerlinoLab Brain** menu-bar app is in `/Applications` or `~/Applications` (MAX-1629), the engine stops building or rebuilding this launcher, and leaves an existing one where it is - the menu-bar app has its own Open Brain button and offers to remove the old launcher itself. Remove the menu-bar app and the next cycle builds the launcher again.
+
 Every click alternates the Brain folder's spelling (without, then with, a trailing `/`; last choice in `~/Serlinolab/.launcher-last`) to dodge anthropics/claude-code#92210 - a link naming the folder already selected opens a scratch session instead. Side effect: Claude's sidebar may show the Brain as two groups. Remove the alternation (`brain_launcher_shell`) once #92210 is fixed.
 
 ## A parked conflict on a non-text file

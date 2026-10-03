@@ -7,6 +7,8 @@ brain_test_setup() {
   # Never build a real launcher app from a test cycle, even on a Mac with Claude installed -
   # tests/brain_launcher.bats points this at a stand-in and stubs the build tools.
   CLAUDE_APP="$BRAIN_ROOT/no-claude-app"; export CLAUDE_APP
+  # A dev Mac with the real SerlinoLab Brain app in /Applications must not change test results.
+  BRAIN_APP_DIRS="$HOME/Applications"; export BRAIN_APP_DIRS
   ROOT="$BRAIN_ROOT"; STATE="$ROOT/.state"; TEAM="$ROOT/team"; MIRROR="$ROOT/Serlinolab_Brain"
   PERSONAL="$ROOT/personal"; MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
   LOCK="$STATE/run.lock"; LOG="$STATE/sync.log"; CONFLICT_STATE="$STATE/conflict_attempts"

@@ -16,6 +16,19 @@ BRAIN_LAUNCHER_PROMPT="get started"
 # app, and any file added under Contents/ breaks that seal ("a sealed resource is missing or
 # invalid"); an attribute on the bundle folder leaves `codesign --verify --strict` passing.
 BRAIN_LAUNCHER_STAMP_ATTR="com.serlinolab.launcher-script"
+# MAX-1629: the "SerlinoLab Brain" menu-bar app carries its own Open Brain button. While it is
+# installed in either folder, this launcher is not built or rebuilt - and an existing one is
+# left exactly where it is: removing a person's app is the menu-bar app's call (it asks), never a
+# background job's. Remove the menu-bar app and the next cycle builds the launcher again.
+BRAIN_APP_NAME="SerlinoLab Brain"
+BRAIN_APP_DIRS="${BRAIN_APP_DIRS:-/Applications:$HOME/Applications}"   # colon-separated, like PATH
+brain_menubar_app_installed(){
+  local d IFS=:
+  # Info.plist, not just the folder: an interrupted drag leaves an empty .app that would turn
+  # the launcher off with nothing working in its place.
+  for d in $BRAIN_APP_DIRS; do [ -f "$d/$BRAIN_APP_NAME.app/Contents/Info.plist" ] && return 0; done
+  return 1
+}
 
 # Percent-encodes every byte except RFC 3986's unreserved characters. Byte-wise through od,
 # because bash 3.2's `printf "'c"` reports a byte above 0x7F as a negative number.
@@ -56,6 +69,8 @@ brain_launcher_script(){
 ensure_brain_launcher(){
   local brain script tmp
   local app="$HOME/Applications/$BRAIN_LAUNCHER_NAME.app" link="$HOME/Desktop/$BRAIN_LAUNCHER_NAME.app"
+  # Silent on purpose: this runs every cycle, and "the app is installed" is the normal case.
+  brain_menubar_app_installed && return 0
   # Not cloned yet: setup is still pending, and a later cycle builds the launcher once it lands.
   brain=$(cd "$ROOT/Serlinolab_Brain" 2>/dev/null && pwd -P) || return 0
   if [ ! -d "$CLAUDE_APP" ]; then
