@@ -31,7 +31,7 @@ teardown() { brain_test_teardown; }
 
   mv "$moved" "$BRAIN_ROOT/origin-team.git"
   grep -q "mirror at" "$LOG"
-  ! grep -q "^offline;" "$LOG"
+  if grep -q "^offline;" "$LOG"; then false; fi
   grep -q "team.*unreachable\|team fetch failed" "$LOG"
 }
 

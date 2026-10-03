@@ -43,7 +43,7 @@ no_ds_store_ever_reached_origin() {
   [ "$(cat "$TEAM2/note.txt")" = "$remote" ]
 
   no_ds_store_ever_reached_origin
-  ! git -C "$TEAM" ls-files --error-unmatch .DS_Store >/dev/null 2>&1
+  if git -C "$TEAM" ls-files --error-unmatch .DS_Store >/dev/null 2>&1; then false; fi
   ! git -C "$TEAM2" ls-files --error-unmatch .DS_Store >/dev/null 2>&1
 }
 
@@ -74,7 +74,7 @@ no_ds_store_ever_reached_origin() {
   cmp -s "$BRAIN_ROOT/remote2.bin" "$mac1_bin"   # remote untouched by the loser
 
   no_ds_store_ever_reached_origin
-  ! git -C "$TEAM" ls-files --error-unmatch .DS_Store >/dev/null 2>&1
+  if git -C "$TEAM" ls-files --error-unmatch .DS_Store >/dev/null 2>&1; then false; fi
   ! git -C "$TEAM2" ls-files --error-unmatch .DS_Store >/dev/null 2>&1
 }
 

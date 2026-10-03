@@ -150,7 +150,7 @@ teardown() { brain_test_teardown; }
   [ "$status" -ne 0 ]
   [ -f "$STATE/autostash_conflict" ]
   [ -f "$MARK" ]
-  ! grep -qi 'rebase\|stash\|autostash\|conflict' "$MARK"   # plain words, no git vocabulary
+  if grep -qi 'rebase\|stash\|autostash\|conflict' "$MARK"; then false; fi   # plain words, no git vocabulary
   grep -q "could not be" "$MARK"
   git -C "$TEAM" stash list | grep -q .   # the person's content is retained, not lost
 

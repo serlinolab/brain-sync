@@ -152,7 +152,7 @@ make_colleague_binary_edit() {
   [ "$status" -eq 3 ]
   [ -f "$MARK" ]
   # nothing partially applied - the text-only commit's content never reached the remote either
-  ! git -C "$BRAIN_ROOT/origin-team.git" show main:note.txt 2>/dev/null | grep -qF "my note"
+  if git -C "$BRAIN_ROOT/origin-team.git" show main:note.txt 2>/dev/null | grep -qF "my note"; then false; fi
   [ ! -d "$(git -C "$TEAM" rev-parse --git-path rebase-merge)" ]
 }
 
