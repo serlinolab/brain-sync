@@ -112,8 +112,9 @@ root beyond protected `main` here.
   copy's version, and only after `app/SHA256`, the bundle signature and the bundle's own version all check out.
 - **Where it goes:** a copy already in `/Applications` (dragged from the DMG) is updated in place;
   otherwise `~/Applications`. Never two copies.
-- **Kept running:** started when it isn't running, unless the person quit it from its menu
-  (`~/Serlinolab/.state/app-quit`, removed when the app starts again).
+- **Kept running, and back after every restart:** the sync job runs at login (`RunAtLoad`), and each
+  cycle starts the app when it isn't running - unless the person quit it from its menu since the
+  last boot (`~/Serlinolab/.state/app-quit`; a quit lasts until the next restart).
 - **A brand-new Mac** still needs the app or `curl | bash` first, because the engine isn't there yet:
   send the DMG (brain-app `scripts/build-dmg.sh`) on Slack, not by email (Gmail blocks `.dmg`).
   That one copy must be unblocked once: System Settings → Privacy & Security → Open Anyway.

@@ -237,3 +237,41 @@ version_at() { /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$
   printf '%s\n' '#!/bin/bash' 'exit 1' > "$BRAIN_ROOT/bin/open"; ensure_menubar_app   # fails again: logged
   [ "$(grep -c "could not start" "$LOG")" -eq 2 ]
 }
+
+# Max, 2026-10-03: "after a reboot nobody relaunches it". The launchd job runs at login
+# (RunAtLoad), so the app comes back by itself - except after a quit from its menu, whose marker
+# used to survive reboots. A quit now lasts until the next boot.
+@test "an app quit before the last reboot is started again" {
+  publish 0.2.0
+  ensure_menubar_app
+  rm -f "$BRAIN_ROOT/open.log"
+  : > "$STATE/app-quit"
+  touch -t 202601010000 "$STATE/app-quit"                  # quit long before...
+  BRAIN_BOOT_TIME=$(date -j -f %Y%m%d%H%M 202601020000 +%s)  # ...this boot
+  ensure_menubar_app
+  grep -qF -- "-g $HOME/Applications/$APP_NAME" "$BRAIN_ROOT/open.log"
+  [ ! -e "$STATE/app-quit" ]
+}
+
+@test "an app quit since the last boot stays quit" {
+  publish 0.2.0
+  ensure_menubar_app
+  rm -f "$BRAIN_ROOT/open.log"
+  BRAIN_BOOT_TIME=$(( $(date +%s) - 3600 ))
+  : > "$STATE/app-quit"
+  ensure_menubar_app
+  [ ! -e "$BRAIN_ROOT/open.log" ]
+  [ -e "$STATE/app-quit" ]
+}
+
+@test "the boot time comes from the kernel when not overridden" {
+  # Review: `.*sec = ` is greedy and matched "usec = 632934" - a number, and earlier than now, so
+  # the old version of this test passed while the feature never fired. Pin it to kern.boottime's
+  # own `sec` field, which must be a real recent epoch.
+  unset BRAIN_BOOT_TIME
+  local t sec; t=$(menubar_boot_time)
+  sec=$(sysctl -n kern.boottime | tr -d '{},' | awk '{for (i=1;i<NF;i++) if ($i=="sec") {print $(i+2); exit}}')
+  [ "$t" = "$sec" ]
+  [ "$t" -gt 1577836800 ]          # after 2020-01-01
+  [ "$t" -le "$(date +%s)" ]
+}
