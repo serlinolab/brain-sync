@@ -11,6 +11,7 @@ source "$DIR/lib/sync.sh"
 source "$DIR/lib/brain_launcher.sh"
 source "$DIR/lib/menubar_app.sh"
 source "$DIR/lib/launcher_refresh.sh"
+source "$DIR/lib/heartbeat.sh"
 
 # Self-update's smoke test: proves this copy sources cleanly and can run,
 # without touching the lock, network, or any repo.
@@ -117,4 +118,11 @@ else
 fi
 what_changed
 update_attention_marker
+# For remote checks (lib/heartbeat.sh); only when team/'s remote answered this cycle.
+if [ "$team_up" -eq 1 ]; then
+  hb="ok"
+  [ "$mirror_up" -eq 0 ] && hb="problem - mirror unreachable"
+  [ "$hb" = ok ] && [ "$cycle_rc" -ne 0 ] && hb="problem - cycle exit $cycle_rc"
+  publish_heartbeat "$hb"
+fi
 exit "$cycle_rc"
