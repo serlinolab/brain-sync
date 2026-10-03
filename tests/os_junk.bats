@@ -18,10 +18,10 @@ teardown() { brain_test_teardown; }
 @test ".DS_Store is never tracked even though something keeps rewriting it, and the tree ends up clean" {
   echo 'finder bytes 1' > "$TEAM/.DS_Store"
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle
-  ! git -C "$TEAM" ls-files --error-unmatch .DS_Store >/dev/null 2>&1
+  if git -C "$TEAM" ls-files --error-unmatch .DS_Store >/dev/null 2>&1; then false; fi
   echo 'finder bytes 2 (rewritten)' > "$TEAM/.DS_Store"   # Finder touches it again
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle
-  ! git -C "$TEAM" ls-files --error-unmatch .DS_Store >/dev/null 2>&1
+  if git -C "$TEAM" ls-files --error-unmatch .DS_Store >/dev/null 2>&1; then false; fi
   [ -z "$(git -C "$TEAM" status --porcelain)" ]   # untracked-but-ignored: not "dirty"
   [ ! -f "$CONFLICT_STATE" ]
   [ ! -f "$MARK" ]
@@ -34,7 +34,7 @@ teardown() { brain_test_teardown; }
 
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle
 
-  ! git -C "$TEAM" ls-files --error-unmatch .DS_Store >/dev/null 2>&1
+  if git -C "$TEAM" ls-files --error-unmatch .DS_Store >/dev/null 2>&1; then false; fi
   [ -f "$TEAM/.DS_Store" ]   # never deleted, only untracked
 }
 
@@ -43,7 +43,7 @@ teardown() { brain_test_teardown; }
   echo x > "$TEAM/sub/dir/.DS_Store"
   echo x > "$TEAM/sub/._resource"
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle
-  ! git -C "$TEAM" ls-files --error-unmatch sub/dir/.DS_Store >/dev/null 2>&1
+  if git -C "$TEAM" ls-files --error-unmatch sub/dir/.DS_Store >/dev/null 2>&1; then false; fi
   ! git -C "$TEAM" ls-files --error-unmatch sub/._resource >/dev/null 2>&1
 }
 
@@ -102,7 +102,7 @@ teardown() { brain_test_teardown; }
   # the real content reached the remote
   git -C "$BRAIN_ROOT/origin-team.git" show main:note.txt | grep -q "the real note"
   # no commit that reached the remote carries .DS_Store in its tree
-  ! git -C "$BRAIN_ROOT/origin-team.git" log --name-only --all -- ':(glob)**/.DS_Store' | grep -q DS_Store
+  if git -C "$BRAIN_ROOT/origin-team.git" log --name-only --all -- ':(glob)**/.DS_Store' | grep -q DS_Store; then false; fi
   # and no blob matching the junk content is reachable at all
   ! git -C "$BRAIN_ROOT/origin-team.git" cat-file --batch-all-objects --batch-check 2>/dev/null \
       | awk '$2=="blob"{print $1}' \
@@ -133,9 +133,9 @@ teardown() { brain_test_teardown; }
   echo x > "$TEAM/.Spotlight-V100/store.db"
   echo x > "$TEAM/.AppleDouble/resource"
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle
-  ! git -C "$TEAM" ls-files --error-unmatch .Trashes/deleted-thing >/dev/null 2>&1
-  ! git -C "$TEAM" ls-files --error-unmatch .fseventsd/0000000012345 >/dev/null 2>&1
-  ! git -C "$TEAM" ls-files --error-unmatch .Spotlight-V100/store.db >/dev/null 2>&1
+  if git -C "$TEAM" ls-files --error-unmatch .Trashes/deleted-thing >/dev/null 2>&1; then false; fi
+  if git -C "$TEAM" ls-files --error-unmatch .fseventsd/0000000012345 >/dev/null 2>&1; then false; fi
+  if git -C "$TEAM" ls-files --error-unmatch .Spotlight-V100/store.db >/dev/null 2>&1; then false; fi
   ! git -C "$TEAM" ls-files --error-unmatch .AppleDouble/resource >/dev/null 2>&1
 }
 
