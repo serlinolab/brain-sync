@@ -35,13 +35,13 @@ host_count() { [ -e "$HOME/.ssh/config" ] || { echo 0; return; }; grep -c "^Host
   : > "$LOG"
   run run_sync_cycle
   cmp -s "$HOME/.ssh/config" "$BRAIN_ROOT/config.before"
-  ! grep -q "restored" "$LOG"
+  if grep -q "restored" "$LOG"; then false; fi
 }
 
 @test "no key, no block: a Mac that never ran setup gets no ssh config written" {
   run run_sync_cycle
   [ ! -e "$HOME/.ssh/config" ]
-  ! grep -q "restored" "$LOG"
+  if grep -q "restored" "$LOG"; then false; fi
 }
 
 @test "only the block whose key exists is restored" {
@@ -57,8 +57,8 @@ host_count() { [ -e "$HOME/.ssh/config" ] || { echo 0; return; }; grep -c "^Host
   run run_sync_cycle
   chmod 600 "$HOME/.ssh/config"
   grep -q "could not restore ~/.ssh/config Host blocks; continuing" "$LOG"
-  ! grep -q "Permission denied" "$LOG"
-  ! grep -q "restored ~/.ssh/config" "$LOG"
+  if grep -q "Permission denied" "$LOG"; then false; fi
+  if grep -q "restored ~/.ssh/config" "$LOG"; then false; fi
   # the cycle went on to its network step instead of stopping here
   grep -qE "offline|unreachable|mirror at|team at" "$LOG"
 }
