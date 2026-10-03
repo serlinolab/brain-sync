@@ -87,23 +87,34 @@ load 'helpers'
 # The "Serlino Brain" launcher (lib/brain_launcher.sh): where it is, what happens, and the
 # "Trust workspace" click Claude asks for every time - without it the Brain's rules stay off.
 @test "the creator-facing section explains opening the Brain and the trust click" {
+  # Since the SerlinoLab Brain menu-bar app (MAX-1629, 2026-10-03), the Brain opens from the brain
+  # icon; the engine no longer builds a Desktop shortcut once the app is installed.
   local creator_section
   creator_section=$(sed -n '1,/^## For Max$/p' "$REPO_ROOT/README.md" | sed '$d')
   run grep -q '^## Opening the Brain$' <<<"$creator_section"
   [ "$status" -eq 0 ]
-  run grep -qF 'Double-click **Serlino Brain** on your Desktop' <<<"$creator_section"
-  [ "$status" -eq 0 ]
-  run grep -qi 'drag it to the Dock' <<<"$creator_section"
+  run grep -qF 'Click the **brain icon** in the menu bar, then **Open Brain**' <<<"$creator_section"
   [ "$status" -eq 0 ]
   run grep -qF '"get started"' <<<"$creator_section"
   [ "$status" -eq 0 ]
   run grep -qF 'Trust workspace' <<<"$creator_section"
-  [ "$status" -eq 0 ]  # Where it is when the Desktop shortcut never arrived (macOS may refuse that one write).
-  run grep -qF 'Applications folder inside your home' <<<"$creator_section"
   [ "$status" -eq 0 ]
   # "after setup" used to promise no approvals at all, while the trust click is every time.
   run grep -qi 'approve anything after setup' <<<"$creator_section"
   [ "$status" -ne 0 ]
+}
+
+@test "the creator-facing section explains the brain icon's colours and Fix" {
+  local creator_section
+  creator_section=$(sed -n '1,/^## For Max$/p' "$REPO_ROOT/README.md" | sed '$d')
+  run grep -q '^## The brain in your menu bar$' <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  local word
+  for word in '**green**' '**yellow**' '**red**' '**grey**' '**Fix…**' 'waiting for Max to approve' \
+              'SOMETHING NEEDS YOUR ATTENTION.txt' 'tell Max' 'macOS 14' 'If no brain icon has appeared'; do
+    run grep -qF -- "$word" <<<"$creator_section"
+    [ "$status" -eq 0 ]
+  done
 }
 
 @test "the runbook says how to rebuild the launcher" {

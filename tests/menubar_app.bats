@@ -275,3 +275,24 @@ version_at() { /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$
   [ "$t" -gt 1577836800 ]          # after 2020-01-01
   [ "$t" -le "$(date +%s)" ]
 }
+
+# README review 2026-10-03: the launcher step used to run BEFORE the app step, so a brand-new
+# Mac's first cycle still built the old launcher (and its Desktop shortcut) just before
+# installing the app that replaces it.
+@test "a brand-new Mac gets the app and never the old launcher" {
+  publish 0.2.0
+  CLAUDE_APP="$BRAIN_ROOT/Claude.app"; export CLAUDE_APP; mkdir -p "$CLAUDE_APP"
+  make_fake_team_repo; make_fake_mirror        # a full cycle, Brain folder present
+  [ -d "$HOME/Applications/$APP_NAME" ]
+  [ ! -e "$HOME/Applications/Serlino Brain.app" ]
+}
+
+# The app needs macOS 14. Below it the engine must not install it - an installed copy that can't
+# start would also switch the old launcher off, leaving that Mac with neither.
+@test "below macOS 14 the app is not installed, so the old launcher stays" {
+  publish 0.2.0
+  BRAIN_MACOS_VERSION=13.6.9 ensure_menubar_app
+  [ ! -e "$HOME/Applications/$APP_NAME" ]
+  BRAIN_MACOS_VERSION=14.0 ensure_menubar_app
+  [ -d "$HOME/Applications/$APP_NAME" ]
+}
