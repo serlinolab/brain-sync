@@ -10,6 +10,7 @@ source "$DIR/lib/complete_setup.sh"
 source "$DIR/lib/sync.sh"
 source "$DIR/lib/brain_launcher.sh"
 source "$DIR/lib/menubar_app.sh"
+source "$DIR/lib/launcher_refresh.sh"
 
 # Self-update's smoke test: proves this copy sources cleanly and can run,
 # without touching the lock, network, or any repo.
@@ -41,6 +42,8 @@ fi
 # hours of cycles read "offline". Re-asserted every cycle, before anything dials out. Never
 # fatal: a cycle that cannot write ~/.ssh/config still runs and reports exactly as before.
 ensure_ssh_hosts || log "could not restore ~/.ssh/config Host blocks; continuing"
+# Local, never fatal: the installed launcher follows this (self-checked) engine (lib/launcher_refresh.sh).
+ensure_launcher_current
 # MAX-1515 change A, amended by review finding B: finish a pending setup (the deploy key may
 # just have been registered) before doing anything else this cycle. Never trusts
 # $STATE/team-configured or $STATE/setup-complete as proof team/ or Serlinolab_Brain/ are actually
