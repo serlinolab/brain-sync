@@ -74,7 +74,7 @@ EOF
   CLAUDE_APP="$BRAIN_ROOT/no-claude-app"; export CLAUDE_APP   # never build a real launcher here
 }
 
-setup() { setup_setup_test; }
+setup() { setup_setup_test; isolate_real_app; }
 teardown() {
   case "${BRAIN_ROOT:-}" in /tmp/*|/private/tmp/*|/var/folders/*) rm -rf "$BRAIN_ROOT" ;; esac
   case "${HOME:-}" in /tmp/*|/private/tmp/*|/var/folders/*) rm -rf "$HOME" ;; esac

@@ -1,5 +1,14 @@
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Every test that runs sync.sh, setup.sh or the launcher calls this (directly or through
+# brain_test_setup; tests/menubar_app.bats enforces it). This repo's app/ holds a REAL build, and
+# a test cycle that saw it would install it and `open` it - launching the real app against the
+# developer's real ~/Serlinolab - or update a real copy in /Applications.
+isolate_real_app() {
+  BRAIN_APP_DIRS="$HOME/Applications"; export BRAIN_APP_DIRS
+  BRAIN_APP_SOURCE="${BRAIN_ROOT:-$HOME}/no-app-source"; export BRAIN_APP_SOURCE
+}
+
 brain_test_setup() {
   BRAIN_ROOT="$(mktemp -d)"; export BRAIN_ROOT
   HOME="$(mktemp -d)"; export HOME
@@ -8,7 +17,7 @@ brain_test_setup() {
   # tests/brain_launcher.bats points this at a stand-in and stubs the build tools.
   CLAUDE_APP="$BRAIN_ROOT/no-claude-app"; export CLAUDE_APP
   # A dev Mac with the real SerlinoLab Brain app in /Applications must not change test results.
-  BRAIN_APP_DIRS="$HOME/Applications"; export BRAIN_APP_DIRS
+  isolate_real_app
   ROOT="$BRAIN_ROOT"; STATE="$ROOT/.state"; TEAM="$ROOT/team"; MIRROR="$ROOT/Serlinolab_Brain"
   PERSONAL="$ROOT/personal"; MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
   LOCK="$STATE/run.lock"; LOG="$STATE/sync.log"; CONFLICT_STATE="$STATE/conflict_attempts"
