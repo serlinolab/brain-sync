@@ -2,6 +2,15 @@
 
 ## Provisioning a new person or Mac
 
+**Which way to onboard (2026-10-03):** the `curl | bash` line below. The SerlinoLab Brain
+menu-bar app then arrives on its own within a few minutes (the engine installs it), so there is
+nothing else to send. The DMG on Slack (brain-app `scripts/build-dmg.sh`) saves the one Terminal
+paste (its wizard runs the same setup.sh) but adds an "Open Anyway" step in Privacy & Security
+that needs an admin user: use it only for someone who won't use Terminal. Once the app is
+notarized (MAX-1638) the DMG becomes the simpler way. The app needs macOS 14; on an older Mac the
+engine skips it and keeps building the old Desktop launcher.
+Check the result with `./fleet-status.sh`.
+
 0. Before the person sets up, create their MediaBuy user in MediaBuy admin. They sign in to
    the MediaBuy connector with it (README, "Connect MediaBuy"); setup cannot do this step,
    because the sign-in must be their own.

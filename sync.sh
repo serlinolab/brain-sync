@@ -77,12 +77,13 @@ else
   complete_setup
   setup_rc=$?
 fi
-# Local only, never fatal: builds the "Serlino Brain" app if it is missing (lib/brain_launcher.sh).
-ensure_brain_launcher
 # Local only, never fatal: installs, updates and keeps running the SerlinoLab Brain menu-bar app
 # from app/ (lib/menubar_app.sh). Before the network on purpose: the zip arrived with this
 # engine's own self-update, so this needs nothing from GitHub.
 ensure_menubar_app
+# After the app, on purpose: once the app is installed the launcher stands aside, so a brand-new
+# Mac never gets the old Desktop launcher it would only replace (lib/brain_launcher.sh).
+ensure_brain_launcher
 commit_local
 commit_rc=$?
 if [ "$commit_rc" -eq 1 ]; then

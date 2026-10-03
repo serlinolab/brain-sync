@@ -31,20 +31,41 @@ From the Brain, Claude also reads what's in your `team/` and `personal/`
 folders — you work in one place, and it sees all three.
 
 You never type a command after setup. The only thing you ever click is **Trust workspace**
-when you open the Brain (below).
+when you open the Brain (below), and **Fix…** if the brain icon ever turns red.
+
+## The brain in your menu bar
+
+A few minutes after setup, a **brain icon** appears at the top right of your screen, in the
+menu bar. It's the **SerlinoLab Brain** app; it installs and updates itself, nothing to do.
+Its colour tells you how syncing is going:
+
+- **green** — up to date;
+- **yellow** — waiting for Max to approve this Mac (right after setup), or a short hiccup;
+- **red** — click it. If it says something needs your attention, open the
+  "SOMETHING NEEDS YOUR ATTENTION.txt" file (see below) and do what it says. Otherwise choose
+  **Fix…**; if it stays red for more than ten minutes, tell Max;
+- **grey** — it can't tell yet (no syncing so far, or this Mac's clock is wrong). If it stays
+  grey, tell Max.
+
+It comes back by itself every time you start the Mac. Quitting it never stops syncing.
+
+It needs macOS 14 or later. If no brain icon has appeared ten minutes after setup, tell Max:
+syncing still works without it.
 
 ## Opening the Brain
 
-1. Double-click **Serlino Brain** on your Desktop. You can also drag it to the Dock, so it's
-   always one click away.
+1. Click the **brain icon** in the menu bar, then **Open Brain**.
 2. Claude opens on the Brain with "get started" already typed in. Press return.
 3. Claude asks **Trust workspace** every time. Click it — that's what switches on the Brain's
    rules.
 
-It needs the Claude app installed, and appears a few minutes after setup (or after you install
-Claude). If it still isn't on your Desktop, it's in the Applications folder inside your home
-folder (the one with your name) — or press ⌘-space and type Serlino Brain. Drag it from there to
-the Dock.
+It needs the Claude app installed. The same menu opens your **team folder**, **what changed**,
+and the Brain in **Obsidian** if you use it (the first time, in Obsidian choose "Open folder as
+vault" and pick the `Serlinolab` folder in your home folder).
+
+You may also have an older **Serlino Brain** shortcut on your Desktop (from before the app
+existed, or on a Mac older than macOS 14); it does the same as Open Brain, and the brain menu
+offers to remove it.
 
 ## Sharing a skill
 

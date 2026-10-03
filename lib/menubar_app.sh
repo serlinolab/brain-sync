@@ -38,9 +38,21 @@ menubar_app_log(){
 }
 menubar_app_ok(){ rm -f "$STATE/menubar-app-problem-$1"; }
 
+# The app needs macOS 14 (LSMinimumSystemVersion). Below it nothing is installed: a copy that can't
+# start would still count as installed and switch the old launcher off, leaving neither.
+BRAIN_APP_MIN_MACOS_MAJOR=14
+menubar_app_supported(){
+  local v major
+  v="${BRAIN_MACOS_VERSION:-$(sw_vers -productVersion 2>/dev/null)}"
+  major="${v%%.*}"
+  case "$major" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$major" -ge "$BRAIN_APP_MIN_MACOS_MAJOR" ]
+}
+
 ensure_menubar_app(){
   local zip="$BRAIN_APP_SOURCE/serlinolab-brain.zip"
   [ -f "$zip" ] || return 0
+  menubar_app_supported || return 0
   local want target
   menubar_app_recover
   want=$(tr -d '[:space:]' < "$BRAIN_APP_SOURCE/VERSION" 2>/dev/null)
