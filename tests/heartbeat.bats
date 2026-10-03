@@ -128,3 +128,19 @@ tip() { origin rev-parse --verify -q "refs/heads/$BRANCH"; }
   FLEET_REMOTE="$BRAIN_ROOT/origin-team.git" run bash "$REPO_ROOT/fleet-status.sh" --full "testperson-$MACHINE"
   [[ "$output" == *"--- last 20 lines of sync.log"* ]] || false
 }
+
+@test "fleet-status keeps its columns aligned whatever the length of a Mac's name" {
+  run_sync_cycle
+  # A second Mac with a long name (the real Mac Studio's id is 35 characters).
+  local f="$BRAIN_ROOT/long.txt" blob tree commit
+  status_file | sed 's/^machine: .*/machine: Mac-Studio-di-massimiliano-de96/' > "$f"
+  blob=$(origin hash-object -w "$f"); tree=$(printf '100644 blob %s\tstatus.txt\n' "$blob" | origin mktree)
+  commit=$(origin -c user.name=t -c user.email=t@t commit-tree "$tree" -m long)
+  origin update-ref "refs/heads/status/a-much-longer-person-Mac-Studio-di-massimiliano-de96" "$commit"
+  FLEET_REMOTE="$BRAIN_ROOT/origin-team.git" run bash "$REPO_ROOT/fleet-status.sh"
+  # The AGE column starts at the same offset on every line, header included.
+  # Where the first run of 2+ spaces after the name ends, i.e. where AGE starts - never a text
+  # search, which could match a digit inside a Mac's name.
+  local offsets; offsets=$(printf '%s\n' "$output" | awk '{ match($0, /  +[^ ]/); print RSTART + RLENGTH - 1 }' | sort -u | wc -l | tr -d ' ')
+  [ "$offsets" -eq 1 ]
+}
