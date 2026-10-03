@@ -196,7 +196,7 @@ make_menubar_app() {
   [ ! -e "$APP" ]
   [ ! -e "$BRAIN_ROOT/osacompile.log" ]
   [ ! -e "$HOME/Desktop/Serlino Brain.app" ]
-  ! grep -q "launcher" "$LOG" 2>/dev/null
+  if grep -q "launcher" "$LOG" 2>/dev/null; then false; fi
 }
 
 @test "with the menu-bar app installed, an existing launcher is neither rebuilt nor removed" {

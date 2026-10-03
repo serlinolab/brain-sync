@@ -7,6 +7,11 @@ set -u
 ROOT="${BRAIN_ROOT:-$HOME/Serlinolab}"
 STATE="$ROOT/.state"; ENGINE="$STATE/engine"; LOG="$STATE/sync.log"
 REMOTE="${BRAIN_SYNC_REMOTE:-https://github.com/serlinolab/brain-sync.git}"
+# The self-update's https git had no limit either: a transfer below 1000 bytes/s for 60 s is now
+# abandoned (git's own low-speed limit) instead of hanging the cycle. Exported, so sync.sh and every
+# git it runs inherit it too.
+export GIT_HTTP_LOW_SPEED_LIMIT="${GIT_HTTP_LOW_SPEED_LIMIT:-1000}"
+export GIT_HTTP_LOW_SPEED_TIME="${GIT_HTTP_LOW_SPEED_TIME:-60}"
 mkdir -p "$STATE"
 log(){ printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$LOG"; }
 

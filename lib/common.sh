@@ -13,7 +13,11 @@
 # "Host key verification failed" (Oscar's Mac, 2026-09-30). GitHub's published host keys ship
 # with the engine and are checked strictly - no trust-on-first-use - instead of the person's ~/.ssh/known_hosts (only github.com is ever dialled).
 _BRAIN_GH_HOSTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/github_known_hosts"
-export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\"$_BRAIN_GH_HOSTS\"}"
+# ConnectTimeout bounds only OPENING a connection. One that dies afterwards (a laptop asleep
+# mid-fetch, a network change) used to wait forever - 51 minutes on Max's other Mac on 2026-10-03,
+# with launchd refusing to start another cycle meanwhile. ServerAlive probes give up after
+# 15 s x 4 unanswered = ~1 minute, the fetch fails, and the cycle carries on.
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\"$_BRAIN_GH_HOSTS\"}"
 ROOT="${BRAIN_ROOT:-$HOME/Serlinolab}"
 STATE="$ROOT/.state"
 TEAM="$ROOT/team"                 # MAX-1515: two-way, everyone writes
