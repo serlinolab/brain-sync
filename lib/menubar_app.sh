@@ -115,11 +115,29 @@ install_menubar_app(){
   return 0
 }
 
+# When this Mac last booted, in epoch seconds (kern.boottime). BRAIN_BOOT_TIME overrides it for tests.
+menubar_boot_time(){
+  [ -n "${BRAIN_BOOT_TIME:-}" ] && { printf '%s' "$BRAIN_BOOT_TIME"; return; }
+  # `{ sec = 1790852603, usec = 632934 } Thu Oct ...`: anchor on "{ sec", never "usec".
+  sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^\{ sec = ([0-9]+),.*/\1/p'
+}
+
 # Kept running, unless the person quit it from its menu ($STATE/app-quit, written by the app and
 # removed when it starts) or a copy is already running (any copy - a developer build counts).
+# A quit lasts until the next boot (Max, 2026-10-03): the job runs at login (RunAtLoad), so after a
+# restart the app comes back by itself even if it was quit before - a marker older than the boot
+# is dropped. An unreadable boot time keeps the marker (never overrides a quit by guessing).
 start_menubar_app(){
   [ -f "$1/Contents/Info.plist" ] || return 0
-  [ -e "$STATE/app-quit" ] && return 0
+  if [ -e "$STATE/app-quit" ]; then
+    local boot quit
+    boot=$(menubar_boot_time); quit=$(stat -f %m "$STATE/app-quit" 2>/dev/null)
+    if [ -n "$boot" ] && [ -n "$quit" ] && [ "$quit" -lt "$boot" ]; then
+      rm -f "$STATE/app-quit"
+    else
+      return 0
+    fi
+  fi
   pgrep -x "$BRAIN_APP_EXECUTABLE" >/dev/null 2>&1 && return 0
   if open -g "$1" >/dev/null 2>&1; then menubar_app_ok start
   else menubar_app_log start "could not start the SerlinoLab Brain app"; fi
