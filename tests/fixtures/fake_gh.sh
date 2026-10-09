@@ -30,6 +30,9 @@
 #                                        "after" removes the key first, like a server that applied the
 #                                        delete and lost the response (MAX-1790: the ambiguous case).
 #
+#   FAKE_GH_DELETE_ADDS_TITLE_TWIN=1   - a key DELETE also registers another key (a different public key) under
+#                                        the deleted key's title, as a second Mac provisioning at the same moment would
+#
 #   `api -X DELETE repos/ORG/REPO/keys/ID` removes the ID-th row of the repo's keys file; a keys
 #   listing's 4th column is that row number, which is the id.
 #
@@ -142,7 +145,11 @@ case "$cmd" in
         keyfile="$STATE/repos/${org}__${repo}.keys"
         [ "$method" = DELETE ] && [ -s "$keyfile" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
         [ "${FAKE_GH_DELETE_FAIL:-}" = before ] && { echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; }
+        if [ "${FAKE_GH_DELETE_ADDS_TITLE_TWIN:-}" = 1 ]; then
+          awk -F'\t' -v n="$id" 'NR==n{printf "%s\tssh-ed25519 AAAAtwin twin\ttrue\n", $1 > "'"$keyfile.twin"'"}' "$keyfile"
+        fi
         awk -v n="$id" 'NR!=n' "$keyfile" > "$keyfile.tmp" && mv "$keyfile.tmp" "$keyfile"
+        [ -e "$keyfile.twin" ] && { cat "$keyfile.twin" >> "$keyfile"; rm -f "$keyfile.twin"; }
         [ "${FAKE_GH_DELETE_FAIL:-}" = after ] && { echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; }
         exit 0
         ;;

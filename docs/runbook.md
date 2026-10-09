@@ -136,8 +136,9 @@ fails with "marked as read only"). The answer picks the mode, so a Mac never nee
   against the freshly fetched origin, so a colleague's upstream change is never reported as the person's
   unsent work. A protected page changed anyway goes to `.state/protected-edits/` instead, as in
   writable mode. An **ignored** local file (a global ignore such as `*.local.md`) whose path a colleague
-  then adds upstream is copied to `.state/brain-replaced/<UTC time>/` before it is overwritten (OS junk
-  and files with the same text excluded). **If any copy cannot be made** (full disk, no temporary file,
+  then adds upstream - spelled in any capitals, or as a file at one of its parent folders - is copied to
+  `.state/brain-replaced/<UTC time>/` before it is overwritten (OS junk and files with the same text
+  excluded). **If any copy cannot be made** (full disk, no temporary file,
   unwritable `.state`), nothing is restored, reset or cleaned that cycle: the cycle exits non-zero,
   `sync.log` says "could not keep a copy", and the attention file says nothing in the folder was changed
   (`.state/brain_preserve_failed` holds the reason and goes away on the next cycle that succeeds).
@@ -154,7 +155,10 @@ whose copy worked (the copies are made first and nothing is put back unless all 
 `team/` still syncs; the cycle exits non-zero and the attention file's "nothing was changed" is true.
 The next cycle with a working `.state` does everything. Whatever is in the git index at a protected
 path (someone ran `git add CLAUDE.md`) is unstaged before every Brain commit, so a protected path is
-never committed whatever state the index was left in.
+never committed whatever state the index was left in. If the staged text is not what is on disk (the file
+was put back after `git add`), the staged text is first copied to
+`.state/protected-edits/<UTC time>/staged/<path>`; if that copy fails the cycle is held like any other
+failed copy.
 
 A protected path that a person changed is copied to `~/Serlinolab/.state/protected-edits/<UTC time>/<path>`
 and put back to what the Brain has (removed if it is new); the attention file says a locked page was
@@ -186,11 +190,13 @@ that cannot be written. After a failed write registration it retries once, then 
 read-only key again so the Mac keeps reading, and finally prints the exact `gh api` command. Re-running
 `./provision.sh --upgrade-brain-key "<title>"` finds the saved key and finishes the upgrade; the title
 alone is enough. A DELETE that answers with an error is treated as unknown (the server may have applied it
-and lost the answer): the saved file is kept and the key list decides - title still there, report and stop;
+and lost the answer): the saved file is kept and the key list decides - the key itself (its public key, not the title) still there, report and stop;
 gone, carry on with the registration; list unavailable, stop with the file kept. The saved file records
 the organisation, repository, title and key and is used only for that exact run. It is removed as soon as a
 writable key under that title exists on GitHub by any path (this script's registration, a pasted setup
 line, or a key found already registered), so a key revoked later cannot come back from it.
+If two keys on the Brain share one title, the script refuses (nothing is deleted or changed) until the extra
+one is removed on GitHub: it will not guess which of them is the Mac's.
 
 ### Rollback
 

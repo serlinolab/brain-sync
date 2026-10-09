@@ -81,11 +81,12 @@ brain_key_reregister(){
 }
 
 # $1 key id, $2 title, $3 public key. A DELETE error is ambiguous (the server may have deleted the key
-# and lost the answer), so the key list decides: title or key still there -> nothing was deleted,
-# report and keep the saved key; both gone -> carry on to the registration. A list that fails is
+# and lost the answer), so the key list decides: the key (its public key, not its title) still there ->
+# nothing was deleted, report and keep the saved key; gone -> carry on to the registration. A list that fails is
 # unknown, never "gone": the saved key stays and the printed way back works either way.
 upgrade_key_mutate(){
-  local rf rows t k ro id gone=1; rf=$(recovery_file "$2")
+  local rf rows t k ro id gone=1 want; rf=$(recovery_file "$2")
+  want=$(awk '{print $1, $2}' <<<"$3")
   mkdir -p "$RECOVERY_DIR" && printf '%s\t%s\t%s\t%s\n' "$BRAIN_ORG" "$MIRROR_REPO" "$2" "$3" > "$rf" \
     || { echo "refusing: could not save the recovery material in $RECOVERY_DIR; nothing was deleted" >&2; return 1; }
   echo "deleting read-only deploy key $1 ('$2') on $MIRROR_REPO, registering the same key again with write access (key saved in $rf first)"
@@ -96,7 +97,7 @@ upgrade_key_mutate(){
       return 1
     fi
     while IFS=$'\t' read -r t k ro id; do
-      [ "$t" = "$2" ] || [ "$(awk '{print $1, $2}' <<<"$k")" = "$(awk '{print $1, $2}' <<<"$3")" ] && gone=0
+      [ "$(awk '{print $1, $2}' <<<"$k")" = "$want" ] && gone=0   # the key itself, never the title (a twin may share it)
     done <<<"$rows"
     if [ "$gone" -eq 0 ]; then
       echo "the key is still registered; nothing was deleted. The saved key is kept in $rf." >&2
@@ -105,9 +106,17 @@ upgrade_key_mutate(){
   fi
   brain_key_reregister "$2" "$3" "$rf"
 }
+# $1 repo rows, $2 title: refuses (returns 1) when more than one key carries the title - which of them is
+# "ours" is then a guess, and a delete or an upgrade must never be a guess.
+title_unambiguous(){
+  [ "$(awk -F'\t' -v t="$2" '$1==t' <<<"$1" | wc -l)" -le 1 ] && return 0
+  echo "refusing: more than one deploy key on $MIRROR_REPO is titled '$2'; remove the extra ones on GitHub first, nothing was changed" >&2
+  return 1
+}
 upgrade_brain_key(){
   local rows t k ro id rf so sr st saved_key
   rows=$(gh_keys_rows "$MIRROR_REPO") || return 1
+  title_unambiguous "$rows" "$1" || return 1
   while IFS=$'\t' read -r t k ro id; do
     [ "$t" = "$1" ] || continue
     if [ "$ro" != true ]; then echo "already writable: '$1' on $MIRROR_REPO"; recovery_forget "$1"; return 0; fi
@@ -182,6 +191,7 @@ register_key_check(){
 
   local rows
   rows=$(gh_keys_rows "$repo") || return 1
+  [ "$repo" != "$MIRROR_REPO" ] || title_unambiguous "$rows" "$title" || return 1
 
   local t k ro id material
   while IFS=$'\t' read -r t k ro id; do

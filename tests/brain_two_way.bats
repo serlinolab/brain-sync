@@ -570,6 +570,28 @@ git_failing_on() {
   ! git -C "$MIRROR" diff --name-only "$before" HEAD | grep -q CLAUDE.md || false
 }
 
+@test "K2 a protected change that exists only in the index is kept before it is unstaged" {
+  local before; before=$(origin rev-parse main)
+  edit_protected CLAUDE.md "staged only rule"; git -C "$MIRROR" add CLAUDE.md
+  edit_protected CLAUDE.md "$(origin show main:CLAUDE.md)"                       # disk back to HEAD; only the index has the text
+  echo "a real note" >> "$MIRROR/company/brand-rules.md"
+  run_sync_cycle
+  [ "$(cat "$STATE"/protected-edits/*/staged/CLAUDE.md)" = "staged only rule" ]
+  grep -q "$STATE/protected-edits/" "$MARK"
+  ! origin diff --name-only "$before" main | grep -q CLAUDE.md || false
+}
+
+@test "K2 a protected change that exists only in the index is not unstaged while its copy fails" {
+  edit_protected CLAUDE.md "staged only rule"; git -C "$MIRROR" add CLAUDE.md
+  edit_protected CLAUDE.md "$(origin show main:CLAUDE.md)"
+  echo "in the way" > "$STATE/protected-edits"
+  run run_sync_cycle
+  [ "$status" -ne 0 ]
+  [ "$(git -C "$MIRROR" show :CLAUDE.md)" = "staged only rule" ]                 # still staged: nothing was changed
+  rm -f "$STATE/protected-edits"; run_sync_cycle
+  [ "$(cat "$STATE"/protected-edits/*/staged/CLAUDE.md)" = "staged only rule" ]
+}
+
 @test "K3 read-only: an ignored local file a colleague adds upstream is kept before it is overwritten" {
   make_brain_readonly; run_sync_cycle
   chmod -R u+w "$MIRROR"; printf '*.local.md\n' > "$BRAIN_ROOT/ignore"; git -C "$MIRROR" config core.excludesFile "$BRAIN_ROOT/ignore"
@@ -591,6 +613,32 @@ git_failing_on() {
   run_sync_cycle
   [ "$(cat "$MIRROR/company/plans.local.md")" = theirs ]
   grep -rqx mine "$STATE" --include=plans.local.md
+}
+
+# MAX-1790 final review: what a colleague adds upstream can collide with an ignored local file by a
+# parent folder or by spelling, not only by the exact path.
+colleague_adds() {   # $1 = path, $2 = text; force-added upstream, the way a colleague who ignores nothing would
+  local o; o=$(mktemp -d); git clone -q "$BRAIN_ROOT/origin-mirror.git" "$o"
+  mkdir -p "$o/$(dirname "$1")"; echo "$2" > "$o/$1"; git -C "$o" add -f -A; git_commit "$o" colleague; git -C "$o" push -q origin main; rm -rf "$o"
+}
+
+@test "K3 an ignored local FOLDER is kept when a colleague adds a file at the folder's own path" {
+  printf '*.local.md\n' > "$BRAIN_ROOT/ignore"; git -C "$MIRROR" config core.excludesFile "$BRAIN_ROOT/ignore"
+  mkdir -p "$MIRROR/company/draft"; echo "mine" > "$MIRROR/company/draft/private.local.md"
+  git -C "$MIRROR" check-ignore -q company/draft/private.local.md
+  colleague_adds company/draft "theirs"
+  run_sync_cycle
+  [ -f "$MIRROR/company/draft" ]                                                 # the colleague's file won
+  grep -rqx mine "$STATE" --include=private.local.md                             # and the folder's text was kept first
+}
+
+@test "K3 an ignored local file is kept when a colleague adds the same name spelled with other capitals" {
+  printf '*.local.md\n' > "$BRAIN_ROOT/ignore"; git -C "$MIRROR" config core.excludesFile "$BRAIN_ROOT/ignore"
+  echo "mine" > "$MIRROR/company/plans.local.md"
+  git -C "$MIRROR" check-ignore -q company/plans.local.md
+  colleague_adds company/Plans.local.md "theirs"
+  run_sync_cycle
+  grep -rqx mine "$STATE" --include=*.local.md                      # Macs mount case-insensitively: it was the same file
 }
 
 @test "K3 an ignored local file nobody else has, or the same text, is left alone and raises no notice" {

@@ -537,3 +537,36 @@ writable_alice() { awk -F'\t' -v t="$T_ALICE" '$1==t && $3=="false"{f=1} END{exi
     [ ! -s "$(BRAIN_KEYS)" ]                                                                   # nothing was registered from it
   done
 }
+
+# --- MAX-1790 final review: keys are matched by id and key material, never by title alone ---
+
+two_alice_keys() {   # two deploy keys under one title: a different read-only key first, ours second
+  printf '%s\tssh-ed25519 AAAAother brain-mirror-x\ttrue\n' "$T_ALICE" > "$(BRAIN_KEYS)"
+  printf '%s\tssh-ed25519 AAAAmirror brain-mirror-alices-mac\ttrue\n' "$T_ALICE" >> "$(BRAIN_KEYS)"
+}
+
+@test "K4 --upgrade-brain-key refuses a title shared by two keys before it deletes anything" {
+  two_alice_keys; local before; before=$(cat "$(BRAIN_KEYS)")
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "$T_ALICE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"more than one"* ]] || false
+  [ "$(cat "$(BRAIN_KEYS)")" = "$before" ]
+  [ ! -e "$(saved_file "$T_ALICE")" ]
+}
+
+@test "K4 a pasted line refuses a title shared by two keys and changes nothing" {
+  printf '%s\tssh-ed25519 AAAAmirror brain-mirror-alices-mac\tfalse\n%s\tssh-ed25519 AAAAother brain-mirror-x\ttrue\n' "$T_ALICE" "$T_ALICE" > "$(BRAIN_KEYS)"
+  local before; before=$(cat "$(BRAIN_KEYS)")   # ours is first and already writable: the old title match said "already registered"
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"more than one"* ]] || false
+  [ "$(cat "$(BRAIN_KEYS)")" = "$before" ]
+}
+
+@test "K4 after an ambiguous delete, another key under the same title does not make the deleted key look present" {
+  seed_readonly_brain_key
+  FAKE_GH_DELETE_FAIL=after FAKE_GH_DELETE_ADDS_TITLE_TWIN=1 run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "$T_ALICE"
+  [ "$status" -eq 0 ]
+  awk -F'\t' -v t="$T_ALICE" '$1==t && $2 ~ /^ssh-ed25519 AAAAmirror/ && $3=="false"{f=1} END{exit !f}' "$(BRAIN_KEYS)"   # ours is back, writable
+  [ -z "$(ls -A "$BRAIN_PROVISION_STATE" 2>/dev/null)" ]
+}
