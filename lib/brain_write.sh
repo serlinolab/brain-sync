@@ -90,19 +90,19 @@ commit_brain(){
 # the reset below erases it - uncommitted edits, new files, and commits that never got pushed.
 # Protected paths are not kept here (they are never the person's to send).
 brain_preserve_unsent(){
-  local list dest p n=0
+  local list dest="" p n=0
   list=$(mktemp) || return 0
   { git -C "$MIRROR" diff --name-only -z --no-renames origin/main --
     git -C "$MIRROR" ls-files -o --exclude-standard -z; } > "$list" 2>/dev/null
-  dest=$(_brain_keep_dir "$BRAIN_UNSENT") || { rm -f "$list"; return 0; }
   while IFS= read -r -d '' p; do
     brain_path_protected "$p" && continue
     [ "$p" = "$BRAIN_SIGNPOST" ] && continue
     [ -e "$MIRROR/$p" ] || [ -L "$MIRROR/$p" ] || continue
+    [ -n "$dest" ] || dest=$(_brain_keep_dir "$BRAIN_UNSENT") || break
     mkdir -p "$dest/files/$(dirname "$p")" && cp -RP -- "$MIRROR/$p" "$dest/files/$p" && n=$((n+1))
   done < "$list"
   rm -f "$list"
-  if [ "$n" -eq 0 ]; then rm -rf "$dest"; return 0; fi
+  [ "$n" -gt 0 ] || return 0
   local -a ex=()
   while IFS= read -r p; do ex+=("$p"); done < <(brain_protected_excludes)
   git -C "$MIRROR" diff --binary origin/main -- . "${ex[@]}" > "$dest/changes.patch" 2>/dev/null

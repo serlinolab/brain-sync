@@ -21,7 +21,7 @@ export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeou
 ROOT="${BRAIN_ROOT:-$HOME/Serlinolab}"
 STATE="$ROOT/.state"
 TEAM="$ROOT/team"                 # MAX-1515: two-way, everyone writes
-MIRROR="$ROOT/Serlinolab_Brain"   # MAX-1515 (amended): beside team/, not nested inside it, read-only
+MIRROR="$ROOT/Serlinolab_Brain"   # MAX-1515 (amended): beside team/, not nested inside it; read-only until this Mac's key may write (MAX-1790)
 PERSONAL="$ROOT/personal"         # MAX-1515: plain folders, no git, engine never touches this
 LOG="$STATE/sync.log"
 MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
