@@ -96,7 +96,9 @@ fi
 brain_rc=0
 commit_brain || brain_rc=$?
 [ "$brain_rc" -eq 0 ] || log "Brain local commit failed; continuing"
-brain_exit=0; [ "$brain_rc" -eq 3 ] && brain_exit=1   # 3: work could not be copied aside; this cycle ends non-zero
+# 3: work could not be copied aside. The cycle ends non-zero and sync_mirror (lib/sync.sh) leaves the Brain
+# alone: no fetch, reset, rebase or push can run while the person's text has no copy. team/ is unaffected.
+brain_exit=0; brain_hold=0; [ "$brain_rc" -eq 3 ] && { brain_exit=1; brain_hold=1; }
 stale_check
 # Codex review of aea244e, blocking finding 1: the mirror and team/ each have their own remote
 # and their own deploy key, so each is probed independently below (online()/team_online(),

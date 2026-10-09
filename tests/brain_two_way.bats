@@ -344,7 +344,7 @@ nothing_kept() { [ ! -d "$STATE/$1" ] || [ -z "$(ls -A "$STATE/$1")" ]; }
   grep -q "could not keep" "$LOG"
 }
 
-@test "writable: when a protected edit cannot be copied it stays exactly as the person left it, and is still not shared" {
+@test "writable: when a protected edit cannot be copied it stays exactly as the person left it, and nothing is shared until it can be" {
   edit_protected CLAUDE.md "my rule"
   echo "in the way" > "$STATE/protected-edits"
   echo "a real note" >> "$MIRROR/company/brand-rules.md"
@@ -352,9 +352,10 @@ nothing_kept() { [ ! -d "$STATE/$1" ] || [ -z "$(ls -A "$STATE/$1")" ]; }
   [ "$status" -ne 0 ]
   [ "$(cat "$MIRROR/CLAUDE.md")" = "my rule" ]                                  # not restored
   ! origin show main:CLAUDE.md | grep -q "my rule" || false                      # not shared
-  origin show main:company/brand-rules.md | grep -q "a real note"                # the rest still goes out
+  ! origin show main:company/brand-rules.md | grep -q "a real note" || false      # nothing goes out while a copy is missing (K1)
   grep -q "Nothing in the Serlinolab_Brain folder was changed" "$MARK"
   rm -f "$STATE/protected-edits"; run_sync_cycle                                 # recovers once the cause is gone
+  origin show main:company/brand-rules.md | grep -q "a real note"
   [ "$(cat "$STATE"/protected-edits/*/CLAUDE.md)" = "my rule" ]
   [ "$(cat "$MIRROR/CLAUDE.md")" = "$(origin show main:CLAUDE.md)" ]
 }
@@ -499,4 +500,174 @@ nothing_kept() { [ ! -d "$STATE/$1" ] || [ -z "$(ls -A "$STATE/$1")" ]; }
   [ "$status" -ne 0 ]
   git -C "$BRAIN_ROOT/origin-team.git" show "$branch:status.txt" | grep -q "result: problem - cycle exit 1"
   grep -q "push failed" "$LOG"
+}
+
+# --- MAX-1790 round 2 --------------------------------------------------------------------------------
+
+# every file's content and the HEAD, so "nothing was changed" is measured, not claimed
+folder_state() { (cd "$MIRROR" && find . -path ./.git -prune -o -type f -print0 | sort -z | xargs -0 shasum; find . -path ./.git -prune -o -type l -exec readlink {} \;; git rev-parse HEAD; git stash list; git status --porcelain); }
+# a bin dir whose `git` fails for one subcommand and is the real git otherwise
+git_failing_on() {
+  local real; real=$(command -v git); mkdir -p "$BRAIN_ROOT/failbin"
+  printf '#!/bin/bash\nfor a in "$@"; do [ "$a" = "%s" ] && exit 1; done\nexec %s "$@"\n' "$1" "$real" > "$BRAIN_ROOT/failbin/git"
+  chmod +x "$BRAIN_ROOT/failbin/git"
+}
+
+@test "K1 writable: when a protected edit cannot be copied, the Brain is not synced at all that cycle and the notice is true" {
+  edit_protected CLAUDE.md "my rule"
+  echo "in the way" > "$STATE/protected-edits"
+  colleague_push CLAUDE.md "the colleague's rules"
+  echo "a real note" >> "$MIRROR/company/brand-rules.md"
+  local before after; before=$(folder_state)
+  run run_sync_cycle
+  [ "$status" -ne 0 ]
+  after=$(folder_state)
+  [ "$before" = "$after" ]                                                      # not one file, commit or stash changed
+  grep -q "Nothing in the Serlinolab_Brain folder was changed" "$MARK"
+  ! grep -q '^<<<<<<<\|^>>>>>>>' "$MIRROR/CLAUDE.md" || false
+  ! origin show main:company/brand-rules.md | grep -q "a real note" || false      # and nothing was pushed
+  rm -f "$STATE/protected-edits"; run_sync_cycle                                 # the cause goes away: all of it happens
+  [ "$(cat "$STATE"/protected-edits/*/CLAUDE.md)" = "my rule" ]
+  [ "$(cat "$MIRROR/CLAUDE.md")" = "the colleague's rules" ]
+  origin show main:company/brand-rules.md | grep -q "a real note"
+}
+
+@test "K1 writable: when one of two protected copies fails, neither is put back" {
+  edit_protected CLAUDE.md "my rule"; edit_protected AGENTS.md "my agents"
+  chmod 000 "$MIRROR/AGENTS.md"
+  run run_sync_cycle
+  chmod 644 "$MIRROR/AGENTS.md"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$MIRROR/CLAUDE.md")" = "my rule" ]                                   # the one that could have been copied stays too
+  [ "$(cat "$MIRROR/AGENTS.md")" = "my agents" ]
+  grep -q "Nothing in the Serlinolab_Brain folder was changed" "$MARK"
+}
+
+@test "K2 a protected change someone staged is never committed: staged and then reverted on disk" {
+  local before; before=$(origin rev-parse main)
+  edit_protected CLAUDE.md "staged rule"; git -C "$MIRROR" add CLAUDE.md
+  edit_protected CLAUDE.md "$(origin show main:CLAUDE.md)"                       # the file on disk is back, the staged copy is not
+  echo "a real note" >> "$MIRROR/company/brand-rules.md"
+  run_sync_cycle
+  origin show main:company/brand-rules.md | grep -q "a real note"                # a commit did happen
+  [ "$(origin show main:CLAUDE.md)" = "$(origin show "$before:CLAUDE.md")" ]
+  ! origin diff --name-only "$before" main | grep -q CLAUDE.md || false
+  ! git -C "$MIRROR" diff --name-only "$before" HEAD | grep -q CLAUDE.md || false
+}
+
+@test "K2 a protected change someone staged is never committed: not after a failed copy, not once the copy works again" {
+  local before; before=$(origin rev-parse main)
+  edit_protected CLAUDE.md "staged rule"; git -C "$MIRROR" add CLAUDE.md
+  echo "in the way" > "$STATE/protected-edits"
+  echo "a real note" >> "$MIRROR/company/brand-rules.md"
+  run run_sync_cycle
+  [ "$status" -ne 0 ]
+  [ "$(git -C "$MIRROR" rev-parse HEAD)" = "$before" ]                           # no commit at all while the copy fails
+  rm -f "$STATE/protected-edits"; run_sync_cycle
+  [ "$(cat "$STATE"/protected-edits/*/CLAUDE.md)" = "staged rule" ]
+  origin show main:company/brand-rules.md | grep -q "a real note"
+  ! origin diff --name-only "$before" main | grep -q CLAUDE.md || false
+  ! git -C "$MIRROR" diff --name-only "$before" HEAD | grep -q CLAUDE.md || false
+}
+
+@test "K3 read-only: an ignored local file a colleague adds upstream is kept before it is overwritten" {
+  make_brain_readonly; run_sync_cycle
+  chmod -R u+w "$MIRROR"; printf '*.local.md\n' > "$BRAIN_ROOT/ignore"; git -C "$MIRROR" config core.excludesFile "$BRAIN_ROOT/ignore"
+  echo "mine" > "$MIRROR/company/plans.local.md"
+  git -C "$MIRROR" check-ignore -q company/plans.local.md                       # ignored, as a global ignore would have it
+  local o; o=$(mktemp -d); git clone -q "$BRAIN_ROOT/origin-mirror.git" "$o"
+  echo "theirs" > "$o/company/plans.local.md"; git -C "$o" add -f -A; git_commit "$o" colleague; git -C "$o" push -q origin main; rm -rf "$o"
+  run_sync_cycle
+  [ "$(cat "$MIRROR/company/plans.local.md")" = theirs ]
+  grep -rqx mine "$STATE" --include=plans.local.md
+}
+
+@test "K3 writable: an ignored local file a colleague adds upstream is kept before it is overwritten" {
+  printf '*.local.md\n' > "$BRAIN_ROOT/ignore"; git -C "$MIRROR" config core.excludesFile "$BRAIN_ROOT/ignore"
+  echo "mine" > "$MIRROR/company/plans.local.md"
+  git -C "$MIRROR" check-ignore -q company/plans.local.md                       # ignored, as a global ignore would have it
+  local o; o=$(mktemp -d); git clone -q "$BRAIN_ROOT/origin-mirror.git" "$o"
+  echo "theirs" > "$o/company/plans.local.md"; git -C "$o" add -f -A; git_commit "$o" colleague; git -C "$o" push -q origin main; rm -rf "$o"
+  run_sync_cycle
+  [ "$(cat "$MIRROR/company/plans.local.md")" = theirs ]
+  grep -rqx mine "$STATE" --include=plans.local.md
+}
+
+@test "K3 an ignored local file nobody else has, or the same text, is left alone and raises no notice" {
+  printf '*.local.md\n' > "$BRAIN_ROOT/ignore"; git -C "$MIRROR" config core.excludesFile "$BRAIN_ROOT/ignore"
+  echo "mine" > "$MIRROR/company/plans.local.md"
+  run_sync_cycle
+  [ "$(cat "$MIRROR/company/plans.local.md")" = mine ]
+  [ -z "$(find "$STATE" -name plans.local.md -not -path "$MIRROR/*")" ]
+}
+
+@test "S2 a refusal whose protected text could not be copied is retried next cycle, and the note still gets out" {
+  install_ruleset_hook
+  chmod u+w "$MIRROR/CLAUDE.md"; echo hacked >> "$MIRROR/CLAUDE.md"; echo ok > "$MIRROR/company/new-ok.md"
+  git -C "$MIRROR" add -A; git_commit "$MIRROR" "made by hand: protected and open together"
+  echo "in the way" > "$STATE/protected-edits"
+  run run_sync_cycle
+  [ "$status" -ne 0 ]
+  ! origin show main:company/new-ok.md >/dev/null 2>&1 || false
+  rm -f "$STATE/protected-edits"; run_sync_cycle
+  origin show main:company/new-ok.md | grep -q ok
+  ! origin show main:CLAUDE.md | grep -q hacked || false
+  grep -rq hacked "$STATE/protected-edits"
+}
+
+@test "S3 a big file already in team/ raises no alarm; one that was refused still does" {
+  make_fake_team_repo
+  local o; o=$(mktemp -d); git clone -q "$BRAIN_ROOT/origin-team.git" "$o"
+  dd if=/dev/zero of="$o/colleague-huge.bin" bs=1048576 count=11 2>/dev/null
+  git -C "$o" add -A; git_commit "$o" "colleague big file"; git -C "$o" push -q origin main; rm -rf "$o"
+  run_sync_cycle; run_sync_cycle
+  [ -f "$TEAM/colleague-huge.bin" ]
+  ! grep -q "too big" "$MARK" 2>/dev/null || false
+  dd if=/dev/zero of="$TEAM/mine-huge.bin" bs=1048576 count=11 2>/dev/null
+  run_sync_cycle
+  grep -q "mine-huge.bin" "$MARK"
+}
+
+@test "S4 a stale too-big notice does not hide the unsent notice when the key goes back to read-only" {
+  dd if=/dev/zero of="$MIRROR/company/huge.bin" bs=1048576 count=11 2>/dev/null
+  run_sync_cycle
+  grep -q "too big" "$MARK"
+  make_brain_readonly
+  echo "mine" >> "$MIRROR/company/brand-rules.md"
+  run_sync_cycle; run_sync_cycle
+  grep -q "can no longer change" "$MARK"
+  ! grep -q "too big" "$MARK" || false
+  BRAIN_NOTICE_MINUTES=0 run_sync_cycle                                          # the unsent notice has expired: the size one must not come back
+  ! grep -q "too big" "$MARK" 2>/dev/null || false
+}
+
+@test "S4 a size notice never hides a notice about kept or unsent text" {
+  dd if=/dev/zero of="$MIRROR/company/huge.bin" bs=1048576 count=11 2>/dev/null
+  edit_protected CLAUDE.md "my rule"
+  run_sync_cycle
+  grep -q "locked page" "$MARK"
+}
+
+@test "S5 read-only: when the patch of unsent work cannot be made, nothing is reset" {
+  make_brain_readonly; run_sync_cycle
+  chmod -R u+w "$MIRROR"; echo "mine" > "$MIRROR/company/brand-rules.md"
+  colleague_push company/colleague.md "from alice"
+  git_failing_on --binary
+  PATH="$BRAIN_ROOT/failbin:$PATH" run run_sync_cycle
+  [ "$status" -ne 0 ]
+  [ "$(cat "$MIRROR/company/brand-rules.md")" = mine ]
+  [ "$(git -C "$MIRROR" rev-parse HEAD)" != "$(origin rev-parse main)" ]
+  grep -q "Nothing in the Serlinolab_Brain folder was changed" "$MARK"
+}
+
+@test "S5 a refusal whose protected text cannot be read back changes none of the commits" {
+  install_ruleset_hook
+  chmod u+w "$MIRROR/CLAUDE.md"; echo hacked >> "$MIRROR/CLAUDE.md"; echo ok > "$MIRROR/company/new-ok.md"
+  git -C "$MIRROR" add -A; git_commit "$MIRROR" "made by hand: protected and open together"
+  local head; head=$(git -C "$MIRROR" rev-parse HEAD)
+  git_failing_on show
+  PATH="$BRAIN_ROOT/failbin:$PATH" run run_sync_cycle
+  [ "$status" -ne 0 ]
+  [ "$(git -C "$MIRROR" rev-parse HEAD)" = "$head" ]                             # not rebuilt without the text it could not save
+  grep -q hacked "$MIRROR/CLAUDE.md"
 }

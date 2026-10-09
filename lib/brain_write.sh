@@ -68,23 +68,34 @@ brain_lock_protected(){
   return 0
 }
 
+# Protected paths are judged by brain_path_protected; `git add`'s exclusions only stop NEW staging, so
+# anything already in the index at such a path has to be taken out of it explicitly. cwd = $MIRROR.
+brain_unstage_protected(){
+  local s
+  local -a specs=()
+  while IFS= read -r s; do specs+=("${s/exclude,/}"); done < <(brain_protected_excludes)
+  git reset -q -- "${specs[@]}"
+}
+
 # cwd = $MIRROR. A protected path that changed (edited, created, deleted) is copied, if it still
 # exists, to .state/protected-edits/<time>/<path>, then put back to what HEAD has (removed if HEAD
-# has nothing). Runs before staging, so a protected path never reaches a commit. A path whose copy
-# fails is NOT put back (its text would be gone) - it stays as the person left it, the
-# git add exclusions still keep it out of the commit, and this returns 1.
+# has nothing). Runs before staging, so a protected path never reaches a commit. ALL OR NOTHING: every
+# copy is made first, and only when all of them worked is anything put back - one that fails leaves
+# every protected path exactly as the person left it (the caller then stops the cycle) and returns 1.
 brain_keep_protected_edits(){
-  local p dest="" list failed=0
+  local p dest="" list
+  local -a prot=()
   list=$(mktemp "${TMPDIR:-/tmp}/brain-list.XXXXXX") || { _brain_preserve_fail "no temporary file"; return 1; }
   { git diff --name-only -z --no-renames HEAD -- && git ls-files -o --exclude-standard -z; } > "$list" 2>/dev/null \
     || { rm -f "$list"; _brain_preserve_fail "could not list what changed"; return 1; }
-  while IFS= read -r -d '' p; do
-    brain_path_protected "$p" || continue
-    if [ -e "$p" ] || [ -L "$p" ]; then
-      if ! _brain_keep_one "$BRAIN_PROTECTED_EDITS" dest "" "$p"; then
-        failed=1; log "could not copy protected Brain file $p aside; leaving it as it is"; continue
-      fi
-    fi
+  while IFS= read -r -d '' p; do brain_path_protected "$p" && prot+=("$p"); done < "$list"
+  rm -f "$list"
+  for p in ${prot[@]+"${prot[@]}"}; do
+    [ -e "$p" ] || [ -L "$p" ] || continue
+    _brain_keep_one "$BRAIN_PROTECTED_EDITS" dest "" "$p" \
+      || { log "could not copy protected Brain file $p aside; changing none of them"; _brain_preserve_fail "a locked page could not be copied aside"; return 1; }
+  done
+  for p in ${prot[@]+"${prot[@]}"}; do
     if git cat-file -e "HEAD:$p" 2>/dev/null; then
       git checkout -q HEAD -- "$p"
     else
@@ -92,9 +103,7 @@ brain_keep_protected_edits(){
       rm -rf -- "$p"; rmdir -p "$(dirname "$p")" 2>/dev/null
     fi
     log "protected Brain file changed, not shared: $p (${dest:+kept in $dest, }put back)"
-  done < "$list"
-  rm -f "$list"
-  [ "$failed" -eq 0 ] || { _brain_preserve_fail "a locked page could not be copied aside"; return 1; }
+  done
   rm -f "$BRAIN_PRESERVE_FAILED"
 }
 
@@ -106,13 +115,15 @@ commit_brain(){
     log "mirror origin does not match the expected remote; refusing to touch it"
     return 1
   fi
-  local rc=0 keep_rc=0
+  local rc=0
   chmod -R u+w "$MIRROR" 2>/dev/null || true
   cd "$MIRROR" || return 1
-  brain_keep_protected_edits || keep_rc=3
+  # 3: a copy failed. Nothing more happens to the Brain this cycle - no commit (a staged protected path
+  # would go into it), and sync.sh keeps sync_mirror away from it (brain_hold) - so the folder stays as
+  # the person left it and the notice (brain_attention) is true.
+  if ! brain_keep_protected_edits; then brain_lock_protected; return 3; fi
   _commit_repo "$MIRROR" brain || rc=$?
   brain_lock_protected
-  [ "$keep_rc" -eq 0 ] || return "$keep_rc"   # 3: a copy failed (the cycle exits non-zero for the Brain)
   return "$rc"
 }
 
@@ -125,6 +136,29 @@ commit_brain(){
 #     files/<path> plus changes.patch;
 #   - protected paths someone changed anyway (the lock was overridden) -> .state/protected-edits/<time>/<path>,
 #     the same place and notice as in writable mode.
+# An IGNORED local file (a global ignore such as *.local.md) is invisible to the measures here and to
+# git's own overwrite checks, but a colleague who force-adds the same path upstream replaces it silently
+# on reset or rebase. Before either, every ignored untracked file whose path the fetched origin/main
+# tracks with different text is copied to .state/brain-replaced/<time>/<path>. OS junk is not kept.
+# Needs a fresh origin/main. Returns 1 if a copy could not be made; the caller then changes nothing.
+brain_preserve_ignored(){
+  local list p blob dest="" n=0 s
+  local -a junk=()
+  while IFS= read -r s; do junk+=("${s/:(/:(exclude,}"); done < <(team_os_junk_pathspecs)
+  list=$(mktemp "${TMPDIR:-/tmp}/brain-list.XXXXXX") || { _brain_preserve_fail "no temporary file"; return 1; }
+  git -C "$MIRROR" ls-files -o -i --exclude-standard -z -- . "${junk[@]}" > "$list" 2>/dev/null \
+    || { rm -f "$list"; _brain_preserve_fail "could not list ignored files"; return 1; }
+  while IFS= read -r -d '' p; do
+    blob=$(git -C "$MIRROR" rev-parse -q --verify "origin/main:$p" 2>/dev/null) || continue
+    [ "$(git -C "$MIRROR" cat-file -t "$blob" 2>/dev/null)" = blob ] || continue
+    [ -L "$MIRROR/$p" ] || [ "$(git -C "$MIRROR" hash-object -- "$p" 2>/dev/null)" != "$blob" ] || continue   # same text: nothing to lose
+    _brain_keep_one "$BRAIN_REPLACED" dest "" "$p" || { rm -f "$list"; _brain_preserve_fail "an ignored file"; return 1; }
+    n=$((n+1))
+  done < "$list"
+  rm -f "$list"
+  [ "$n" -eq 0 ] || log "$n ignored local file(s) are about to be replaced by a colleague's; kept in $dest"
+}
+
 # Returns 1 if ANY copy could not be made; the caller then resets nothing.
 brain_preserve_unsent(){
   local list base udest="" pdest="" p n=0 np=0 have_head=0
@@ -152,6 +186,7 @@ brain_preserve_unsent(){
     fi
   done < "$list"
   rm -f "$list"
+  brain_preserve_ignored || return 1
   if [ "$n" -gt 0 ]; then
     local -a ex=()
     while IFS= read -r p; do ex+=("$p"); done < <(brain_protected_excludes)
@@ -180,10 +215,12 @@ brain_push_hook(){
     return 0
   fi
   case "$2" in *GH013*|*"repository rule violations"*|*"File path is restricted"*) ;; *) return 1 ;; esac
-  echo "$origin_sha $local_sha" > "$BRAIN_PUSH_PARKED"
+  # Parked only once the refusal is dealt with (or cannot be). A copy that fails below parks nothing:
+  # the next cycle pushes, is refused again and retries the copy, instead of leaving the person's
+  # ordinary notes unsent behind a "nothing has changed" verdict.
   local -a prot=()
   while IFS= read -r -d '' p; do brain_path_protected "$p" && prot+=("$p"); done < <(git diff --name-only -z --no-renames origin/main HEAD --)
-  [ "${#prot[@]}" -gt 0 ] || { log "GitHub refused the Brain push but none of our changes touch a protected path; parked"; return 1; }
+  [ "${#prot[@]}" -gt 0 ] || { echo "$origin_sha $local_sha" > "$BRAIN_PUSH_PARKED"; log "GitHub refused the Brain push but none of our changes touch a protected path; parked"; return 1; }
   dest=$(_brain_keep_dir "$BRAIN_PROTECTED_EDITS") || return 1
   for p in "${prot[@]}"; do
     if git cat-file -e "HEAD:$p" 2>/dev/null; then
@@ -206,6 +243,7 @@ _sync_brain_two_way(){
   [ -e "$BRAIN_WRITABLE" ] || log "this Mac may now write to the Brain; the folder is editable"
   : > "$BRAIN_WRITABLE"
   chmod -R u+w "$MIRROR" 2>/dev/null || true   # protected paths were read-only; git must replace them
+  brain_preserve_ignored || return 1   # before anything below can replace a file
   git -C "$MIRROR" config core.hooksPath "$MIRROR/.git/hooks"
   install_team_hooks "$MIRROR" "$STATE/engine/lib" || log "could not install the secret-scan hooks in the Brain"
   _sync_after_fetch "$MIRROR" brain "$BRAIN_CONFLICT_STATE" "$BRAIN_CONFLICT_PARK_SHAS" "$BRAIN_AUTOSTASH_STATE" brain_push_hook || rc=$?
@@ -222,9 +260,6 @@ brain_attention(){
   local f age_h d
   if [ -f "$BRAIN_PRESERVE_FAILED" ]; then
     printf 'Some changes in the Serlinolab_Brain folder could not be saved to a safe place on this Mac.\nNothing in the Serlinolab_Brain folder was changed - your files are exactly as you left them.\nPlease tell Max.\n' > "$MARK"; return 0
-  fi
-  if [ -s "$STATE/brain_oversized_rejects" ]; then
-    printf 'A file in the Serlinolab_Brain folder is too big to share and was left out:\n  %s\n' "$(head -1 "$STATE/brain_oversized_rejects")" > "$MARK"; return 0
   fi
   if [ -s "$STATE/brain_secret_rejects" ]; then
     printf 'A file looked like it contained a password or access key, so it was kept out of the Serlinolab_Brain folder:\n  %s\nIt is still on this Mac, unchanged. Please tell Max.\n' "$(head -1 "$STATE/brain_secret_rejects")" > "$MARK"; return 0
@@ -249,6 +284,14 @@ brain_attention(){
   d=$(find "$BRAIN_UNSENT" -mindepth 1 -maxdepth 1 -type d -mmin "-$BRAIN_NOTICE_MINUTES" 2>/dev/null | sort | tail -1)
   if [ -n "$d" ]; then
     printf 'This Mac can no longer change the Serlinolab_Brain folder, so your latest changes there were not shared.\nYour text is kept here:\n  %s\nPlease tell Max.\n' "$d" > "$MARK"; return 0
+  fi
+  d=$(find "$BRAIN_REPLACED" -mindepth 1 -maxdepth 1 -type d -mmin "-$BRAIN_NOTICE_MINUTES" 2>/dev/null | sort | tail -1)
+  if [ -n "$d" ]; then
+    printf 'A file of yours in the Serlinolab_Brain folder was replaced by a colleague'"'"'s file of the same name.\nYour version is kept here:\n  %s\n' "$d" > "$MARK"; return 0
+  fi
+  # Last on purpose: a size notice must never hide text that was kept or not shared above.
+  if [ -s "$STATE/brain_oversized_rejects" ]; then
+    printf 'A file in the Serlinolab_Brain folder is too big to share and was left out:\n  %s\n' "$(head -1 "$STATE/brain_oversized_rejects")" > "$MARK"; return 0
   fi
   return 1
 }

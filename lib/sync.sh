@@ -93,6 +93,10 @@ sync_mirror(){
     log "mirror origin does not match the expected remote; refusing to touch it"
     return 1
   fi
+  if [ "${brain_hold:-0}" = 1 ]; then   # set by sync.sh when commit_brain could not keep a copy of someone's work
+    log "work in the Brain folder has no safe copy yet; not syncing the Brain this cycle"
+    return 1
+  fi
   local rc=0
   if ! git -C "$MIRROR" fetch --quiet origin; then
     log "mirror fetch failed"
@@ -114,7 +118,7 @@ sync_mirror(){
   # A copy that fails stops everything below: no reset, no clean, no re-lock - the folder stays as
   # the person left it, and the attention marker says so (brain_attention).
   brain_preserve_unsent || return 1
-  rm -f "$BRAIN_WRITABLE"
+  rm -f "$BRAIN_WRITABLE" "$STATE/brain_oversized_rejects" "$STATE/brain_secret_rejects"   # those notices were about files it just kept and reset
   rc=0
   chmod -R u+w "$MIRROR" 2>/dev/null || true   # git needs write only after the fetch
   git -C "$MIRROR" reset --hard --quiet origin/main || rc=1
@@ -196,6 +200,9 @@ _commit_repo(){
   local big secret rc=0
   local -a exclude_specs=()
   while IFS= read -r spec; do exclude_specs+=("$spec"); done < <(team_add_exclude_pathspecs; [ "$kind" = brain ] && brain_protected_excludes)
+  # `git add` exclusions only stop NEW staging: a protected path someone already staged (or an agent
+  # did) is in the index and would ride along into the commit. Unstage them first, every time.
+  [ "$kind" != brain ] || brain_unstage_protected || { log "could not unstage the protected Brain paths"; return 1; }
   git add -A -- . "${exclude_specs[@]}" || { log "git add failed"; return 1; }
   rm -f "$oversized"
   while IFS= read -r -d '' big; do
@@ -581,9 +588,11 @@ update_attention_marker(){
     return
   fi
   if [ -d "$TEAM/.git" ]; then
-    big=$(find "$TEAM" -path "$TEAM/.git" -prune -o -type f -size +10240k -print 2>/dev/null | head -1)
+    # What commit_local actually refused this cycle (_commit_repo), not every big file on disk: one a
+    # colleague already shared is not "left out" and must not raise a standing alarm.
+    big=$(head -1 "$STATE/oversized_rejects" 2>/dev/null)
     if [ -n "$big" ]; then
-      printf 'A file is too big to share and was left out:\n  %s\n' "${big#"$TEAM"/}" > "$MARK"
+      printf 'A file is too big to share and was left out:\n  %s\n' "$big" > "$MARK"
       return
     fi
     if [ -s "$STATE/secret_rejects" ]; then
