@@ -135,15 +135,26 @@ fails with "marked as read only"). The answer picks the mode, so a Mac never nee
   "Written meanwhile" is measured against what that clone last had (and its unpushed commits), not
   against the freshly fetched origin, so a colleague's upstream change is never reported as the person's
   unsent work. A protected page changed anyway goes to `.state/protected-edits/` instead, as in
-  writable mode. **If any copy cannot be made** (full disk, no temporary file, unwritable `.state`),
-  nothing is restored, reset or cleaned that cycle: the cycle exits non-zero, `sync.log` says "could
-  not keep a copy", and the attention file says nothing in the folder was changed
+  writable mode. An **ignored** local file (a global ignore such as `*.local.md`) whose path a colleague
+  then adds upstream is copied to `.state/brain-replaced/<UTC time>/` before it is overwritten (OS junk
+  and files with the same text excluded). **If any copy cannot be made** (full disk, no temporary file,
+  unwritable `.state`), nothing is restored, reset or cleaned that cycle: the cycle exits non-zero,
+  `sync.log` says "could not keep a copy", and the attention file says nothing in the folder was changed
   (`.state/brain_preserve_failed` holds the reason and goes away on the next cycle that succeeds).
 - **Writable key**: the same pipeline as `team/` (secret scan, 10 MB limit, OS junk, union merge of text
   conflicts, binary conflicts parked with both copies, autostash check, remote-match check, offline
   local commit), with its own state files (`brain_*`, `brain-conflicts/`) so a parked Brain never blocks
   `team/`. `.state/brain-writable` records the last answer; it is what lets the network-free local
   commit run before the probe. A probe that cannot tell (network trouble) keeps the previous mode.
+
+**A copy that fails stops the whole Brain for that cycle, in this mode too.** If a protected edit
+cannot be copied aside, `commit_brain` returns 3 and `sync.sh` keeps `sync_mirror` away from the Brain
+(`brain_hold`): no commit, fetch, rebase, push or restore of any file, not even of the protected paths
+whose copy worked (the copies are made first and nothing is put back unless all of them succeeded).
+`team/` still syncs; the cycle exits non-zero and the attention file's "nothing was changed" is true.
+The next cycle with a working `.state` does everything. Whatever is in the git index at a protected
+path (someone ran `git add CLAUDE.md`) is unstaged before every Brain commit, so a protected path is
+never committed whatever state the index was left in.
 
 A protected path that a person changed is copied to `~/Serlinolab/.state/protected-edits/<UTC time>/<path>`
 and put back to what the Brain has (removed if it is new); the attention file says a locked page was
@@ -174,7 +185,12 @@ on GitHub until it is registered again. The script saves the title and the **pub
 that cannot be written. After a failed write registration it retries once, then registers the old
 read-only key again so the Mac keeps reading, and finally prints the exact `gh api` command. Re-running
 `./provision.sh --upgrade-brain-key "<title>"` finds the saved key and finishes the upgrade; the title
-alone is enough. The saved file is removed when the key is writable.
+alone is enough. A DELETE that answers with an error is treated as unknown (the server may have applied it
+and lost the answer): the saved file is kept and the key list decides - title still there, report and stop;
+gone, carry on with the registration; list unavailable, stop with the file kept. The saved file records
+the organisation, repository, title and key and is used only for that exact run. It is removed as soon as a
+writable key under that title exists on GitHub by any path (this script's registration, a pasted setup
+line, or a key found already registered), so a key revoked later cannot come back from it.
 
 ### Rollback
 
