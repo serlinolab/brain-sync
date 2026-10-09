@@ -81,7 +81,12 @@ make_fake_team_repo() {
   install_test_team_hooks "$STATE/engine/lib"
   date -u +%FT%TZ > "$STATE/team-configured"
 }
-make_fake_mirror() { mkdir -p "$ROOT"; seed_repo "$BRAIN_ROOT/origin-mirror.git" "$MIRROR" sub/file.txt; ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git"; export ONLINE_CHECK_REMOTE; run_sync_cycle; }
+# MAX-1790: the Brain is read-only unless this Mac's key may push, which the engine finds out by
+# a dry-run push. A local-path origin always accepts one, so a Brain clone is made read-only by
+# pointing its receive-pack at a stand-in that refuses like GitHub does for a read-only key.
+make_brain_readonly() { git -C "${1:-$MIRROR}" config remote.origin.receivepack "$REPO_ROOT/tests/fixtures/receive_pack_readonly.sh"; }
+make_brain_writable() { git -C "${1:-$MIRROR}" config --unset remote.origin.receivepack; }
+make_fake_mirror() { mkdir -p "$ROOT"; seed_repo "$BRAIN_ROOT/origin-mirror.git" "$MIRROR" sub/file.txt; make_brain_readonly; ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git"; export ONLINE_CHECK_REMOTE; run_sync_cycle; }
 make_local_ahead_change() { echo 'unsent note' >> "$TEAM/note.txt"; }
 
 # team_online() (lib/sync.sh) now probes team/'s OWN real origin, not ONLINE_CHECK_REMOTE - so
@@ -147,4 +152,68 @@ run_second_mac_sync_cycle() { BRAIN_ROOT="$ROOT2" bash "$REPO_ROOT/sync.sh"; }
 break_origin_sync_sh() {
   printf '#!/bin/bash\nexit 1\n' > "$BRAIN_SYNC_WORK/sync.sh"
   git -C "$BRAIN_SYNC_WORK" add sync.sh; git_commit "$BRAIN_SYNC_WORK" 'broken engine'; git -C "$BRAIN_SYNC_WORK" push -q origin main
+}
+
+# --- MAX-1790: a Brain this Mac may write to -------------------------------------------------------
+
+# The Brain as the real repo looks: protected rules/skills/method/export pages next to open pages,
+# and `.agents` a symlink to `.claude/skills`.
+seed_brain_tree() {
+  local d="$1"
+  mkdir -p "$d/.claude/skills/s" "$d/method/craft" "$d/company" "$d/audits" "$d/running-notes" "$d/sub" "$d/competitors"
+  echo rules > "$d/CLAUDE.md"; echo skill > "$d/.claude/skills/s/SKILL.md"
+  echo method > "$d/method/README.md"; echo craft > "$d/method/craft/scriptwriting.md"
+  echo brand > "$d/company/brand-rules.md"; echo stock > "$d/company/stock-status.md"
+  echo weekly > "$d/audits/latest-weekly.md"; echo overview > "$d/competitors/README.md"
+  echo note > "$d/running-notes/n.md"; echo hello > "$d/sub/file.txt"
+  ln -s .claude/skills "$d/.agents"
+}
+
+# A Brain clone whose key can push (a local origin always accepts a dry-run push) - the first
+# cycle switches this Mac to two-way; edits made after it are committed by the next one.
+make_writable_brain() {
+  local tmp; tmp="$(mktemp -d)"
+  mkdir -p "$ROOT" "$STATE/engine/lib"
+  cp "$REPO_ROOT/lib/secretscan.sh" "$STATE/engine/lib/secretscan.sh"
+  git init -q --bare "$BRAIN_ROOT/origin-mirror.git"; git init -q -b main "$tmp"
+  seed_brain_tree "$tmp"
+  git -C "$tmp" add -A; git_commit "$tmp" init
+  git -C "$tmp" remote add origin "$BRAIN_ROOT/origin-mirror.git"; git -C "$tmp" push -q origin main
+  git clone -q "$BRAIN_ROOT/origin-mirror.git" "$MIRROR"; rm -rf "$tmp"
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-mirror.git"; export ONLINE_CHECK_REMOTE
+  run_sync_cycle
+}
+
+# A second Mac (person "karl") on the same origin, already switched to two-way.
+setup_second_brain_mac() {
+  ROOT2="$(mktemp -d)"; export ROOT2
+  STATE2="$ROOT2/.state"; export STATE2
+  mkdir -p "$STATE2/engine/lib"
+  printf 'karl\n' > "$STATE2/person"
+  cp "$REPO_ROOT/lib/secretscan.sh" "$STATE2/engine/lib/secretscan.sh"
+  git clone -q "$BRAIN_ROOT/origin-mirror.git" "$ROOT2/Serlinolab_Brain"
+  run_second_mac_sync_cycle
+}
+
+# Stands in for the GitHub push ruleset: the origin's pre-receive hook refuses a push whose range
+# touches a protected path, in GitHub's words (GH013 / "File path is restricted"). Its OWN list of
+# patterns, deliberately not the engine's. With `refuse-everything` it refuses every push, which
+# the engine cannot repair. Every call is counted in <origin>/pre-receive-calls.
+install_ruleset_hook() {
+  local hook="$BRAIN_ROOT/origin-mirror.git/hooks/pre-receive"
+  printf '#!/bin/bash\nREFUSE_ALL=%s\n' "${1:+1}" > "$hook"
+  cat >> "$hook" <<'HOOK'
+echo call >> "$(git rev-parse --git-dir)/pre-receive-calls"
+protected='(^|/)(CLAUDE\.md|CLAUDE\.local\.md|AGENTS\.md)$|(^|/)\.(claude|agents)(/|$)|^method/|^(audits/latest-weekly\.md|company/stock-status\.md|competitors/README\.md|voice-of-customer/(corpus-profile|phrase-bank-it|phrase-bank-us|support-requests)\.md)$'
+while read -r old new ref; do
+  bad=$(git diff --name-only "$old" "$new" 2>/dev/null | grep -E "$protected" | head -1)
+  [ -n "$REFUSE_ALL" ] && bad=${bad:-any-path}
+  if [ -n "$bad" ]; then
+    echo "error: GH013: Repository rule violations found for $ref." >&2
+    echo "- File path is restricted: $bad (push declined due to repository rule violations)" >&2
+    exit 1
+  fi
+done
+HOOK
+  chmod +x "$hook"
 }

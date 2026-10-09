@@ -91,6 +91,9 @@ if [ "$commit_rc" -eq 1 ]; then
   update_attention_marker
   exit 1
 fi
+# MAX-1790: a Brain this Mac may write to is committed locally too (lib/brain_write.sh) - after
+# team/, and never fatal to it. Local only: whether the Brain is writable is last cycle's answer.
+commit_brain || log "Brain local commit failed; continuing"
 stale_check
 # Codex review of aea244e, blocking finding 1: the mirror and team/ each have their own remote
 # and their own deploy key, so each is probed independently below (online()/team_online(),

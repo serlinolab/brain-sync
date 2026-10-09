@@ -1,0 +1,369 @@
+#!/usr/bin/env bats
+# MAX-1790 - the Brain as a two-way folder. A Mac whose deploy key may push to Serlinolab-Brain
+# edits it directly: a save to an unprotected file is committed under that person and reaches
+# every other Mac; protected paths (lib/protected_paths.sh) stay read-only, are never committed,
+# and any text written into one is kept aside. A Mac whose key is read-only keeps today's
+# mirror behaviour and never loses what it had written. The team/ safeguards (secret scan,
+# size limit, OS junk, union merge, parked binary conflicts, autostash check, remote-match check,
+# offline commit) apply to the Brain too.
+load 'helpers'
+
+setup() { brain_test_setup; make_writable_brain; }
+teardown() {
+  [ -n "${ROOT2:-}" ] && chmod -R u+w "$ROOT2" 2>/dev/null
+  [ -n "${ROOT2:-}" ] && rm -rf "$ROOT2"
+  brain_test_teardown
+}
+
+origin() { git -C "$BRAIN_ROOT/origin-mirror.git" "$@"; }
+# an editor that saves by replacing the file, which a read-only FILE does not stop
+edit_protected() { chmod u+w "$(dirname "$MIRROR/$1")" 2>/dev/null; printf '%s\n' "$2" > "$MIRROR/$1.new" && mv -f "$MIRROR/$1.new" "$MIRROR/$1"; }
+
+PROTECTED_PATHS=(AGENTS.md CLAUDE.md a/b/AGENTS.md notes/CLAUDE.local.md .claude/skills/hooks/SKILL.md
+  .claude/rules/new.md .claude/new.md x/.claude/skills/s/SKILL.md .agents/y/z.md .agents method/README.md
+  method/craft/scriptwriting.md audits/latest-weekly.md company/stock-status.md competitors/README.md
+  voice-of-customer/corpus-profile.md voice-of-customer/phrase-bank-it.md voice-of-customer/phrase-bank-us.md
+  voice-of-customer/support-requests.md)
+OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x.md methods/x.md claude.md
+  company/CLAUDE.md.bak voice-of-customer/phrase-bank-fr.md)
+
+# --- the rule itself -------------------------------------------------------------------------
+
+@test "the protected-path rule refuses the 18 ruleset paths and lets ordinary pages through" {
+  source "$REPO_ROOT/lib/protected_paths.sh"
+  local p
+  for p in "${PROTECTED_PATHS[@]}"; do brain_path_protected "$p" || { echo "should be protected: $p"; false; }; done
+  for p in "${OPEN_PATHS[@]}"; do ! brain_path_protected "$p" || { echo "should be open: $p"; false; }; done
+}
+
+@test "the git add exclude pathspecs agree with the predicate, path for path" {
+  source "$REPO_ROOT/lib/protected_paths.sh"
+  local r="$BRAIN_ROOT/pathspec-check" p
+  git init -q "$r"
+  for p in "${PROTECTED_PATHS[@]}" "${OPEN_PATHS[@]}"; do
+    [ "$p" = .agents ] && continue   # the symlink itself is covered by the .agents/y/z.md case below
+    [ "$p" = claude.md ] && continue # the same file as CLAUDE.md on a case-insensitive Mac volume
+    mkdir -p "$r/$(dirname "$p")"; echo x > "$r/$p"
+  done
+  local -a specs=()
+  while IFS= read -r p; do specs+=("$p"); done < <(brain_protected_excludes)
+  git -C "$r" add -A -- . "${specs[@]}"
+  local staged; staged=$(git -C "$r" diff --cached --name-only)
+  for p in "${PROTECTED_PATHS[@]}"; do
+    [ "$p" = .agents ] && continue
+    ! grep -qxF "$p" <<<"$staged" || { echo "staged although protected: $p"; false; }
+  done
+  for p in "${OPEN_PATHS[@]}"; do [ "$p" = claude.md ] || grep -qxF "$p" <<<"$staged" || { echo "not staged although open: $p"; false; }; done
+}
+
+# --- two-way ---------------------------------------------------------------------------------
+
+@test "a save to an unprotected file reaches origin under this person, and the other Mac the cycle after" {
+  setup_second_brain_mac
+  echo "new rule" >> "$MIRROR/company/brand-rules.md"
+  mkdir -p "$MIRROR/running-notes"; echo probe > "$MIRROR/running-notes/max-1790-probe.md"
+  run_sync_cycle
+  origin show main:company/brand-rules.md | grep -q "new rule"
+  origin show main:running-notes/max-1790-probe.md >/dev/null
+  [ "$(origin log -1 --format=%an)" = "Serlino Brain (testperson)" ]
+  [[ "$(origin log -1 --format=%ae)" == brain-testperson@* ]] || false
+  [ -z "$(git -C "$MIRROR" status --porcelain)" ]            # the signpost is not an uncommitted change
+  ! origin ls-tree -r --name-only main | grep -q "READ ME FIRST"
+  grep -q "Save a change here" "$MIRROR/READ ME FIRST.txt"
+  [ -f "$ROOT/what-changed.md" ]
+
+  run_second_mac_sync_cycle
+  grep -q "new rule" "$ROOT2/Serlinolab_Brain/company/brand-rules.md"
+  echo "from karl" > "$ROOT2/Serlinolab_Brain/company/karl.md"
+  run_second_mac_sync_cycle
+  run_sync_cycle
+  grep -q "from karl" "$MIRROR/company/karl.md"
+  [ "$(origin log -1 --format=%an)" = "Serlino Brain (karl)" ]
+}
+
+@test "everything except the protected paths is writable, and the protected ones refuse a plain write" {
+  touch "$MIRROR/company/x.md" "$MIRROR/root-file.md"; mkdir "$MIRROR/company/newdir"
+  echo more >> "$MIRROR/company/brand-rules.md"
+  run bash -c "echo x >> '$MIRROR/CLAUDE.md'" 2>/dev/null;       [ "$status" -ne 0 ]
+  run bash -c "echo x >> '$MIRROR/method/README.md'" 2>/dev/null; [ "$status" -ne 0 ]
+  run bash -c "touch '$MIRROR/method/new.md'" 2>/dev/null;        [ "$status" -ne 0 ]
+  run bash -c "touch '$MIRROR/.claude/new.md'" 2>/dev/null;       [ "$status" -ne 0 ]
+  run bash -c "echo x >> '$MIRROR/company/stock-status.md'" 2>/dev/null; [ "$status" -ne 0 ]
+  run_sync_cycle
+  # still so after a cycle that fetched, rebased and committed
+  run bash -c "echo x >> '$MIRROR/CLAUDE.md'" 2>/dev/null;       [ "$status" -ne 0 ]
+  touch "$MIRROR/company/y.md"
+}
+
+@test "a protected edit is kept aside, put back, never committed, and the person is told in plain words" {
+  local before; before=$(origin rev-parse main)
+  edit_protected CLAUDE.md "my rule"
+  edit_protected method/README.md "my method"
+  chmod u+w "$MIRROR/.claude"; echo new > "$MIRROR/.claude/new.md"
+  rm -f "$MIRROR/company/stock-status.md"
+  echo "a real note" >> "$MIRROR/company/brand-rules.md"
+  run run_sync_cycle
+  [ "$status" -eq 0 ]
+  [ "$(origin diff --name-only "$before" main)" = "company/brand-rules.md" ]    # only the open page went out
+  [ "$(cat "$MIRROR/CLAUDE.md")" = "$(origin show main:CLAUDE.md)" ]
+  [ "$(cat "$MIRROR/method/README.md")" = "$(origin show main:method/README.md)" ]
+  [ ! -e "$MIRROR/.claude/new.md" ]
+  [ -e "$MIRROR/company/stock-status.md" ]
+  [ -z "$(git -C "$MIRROR" status --porcelain)" ]
+  local kept; kept=$(ls -d "$STATE"/protected-edits/*)
+  [ "$(cat "$kept/CLAUDE.md")" = "my rule" ]
+  [ "$(cat "$kept/method/README.md")" = "my method" ]
+  [ "$(cat "$kept/.claude/new.md")" = "new" ]
+  grep -q "locked page" "$MARK"
+  grep -qF "$STATE/protected-edits/" "$MARK"
+  ! grep -qi 'git\|commit\|rebase\|ruleset' "$MARK"
+  run bash -c "echo x >> '$MIRROR/CLAUDE.md'" 2>/dev/null; [ "$status" -ne 0 ]    # locked again
+  run bash -c "touch '$MIRROR/method/n.md'" 2>/dev/null;   [ "$status" -ne 0 ]
+}
+
+@test "the git add exclusion alone keeps a protected edit out of a commit, whatever the restore step did" {
+  # second layer: _commit_repo is called WITHOUT brain_keep_protected_edits having run first
+  edit_protected CLAUDE.md "my rule"; edit_protected method/README.md "my method"
+  mkdir -p "$MIRROR/x/.claude"; echo new > "$MIRROR/x/.claude/n.md"
+  echo "open" > "$MIRROR/company/open.md"
+  run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/secretscan.sh'; \
+    source '$REPO_ROOT/lib/team_layout.sh'; source '$REPO_ROOT/lib/complete_setup.sh'; \
+    source '$REPO_ROOT/lib/sync.sh'; _commit_repo '$MIRROR' brain"
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$MIRROR" show --name-only --format= HEAD)" = "company/open.md" ]
+}
+
+@test "the .agents symlink is protected as a path: replacing it is undone" {
+  rm -f "$MIRROR/.agents"; echo "not a link" > "$MIRROR/.agents"
+  run_sync_cycle
+  [ -L "$MIRROR/.agents" ]
+  [ "$(origin ls-tree main .agents | cut -c1-6)" = 120000 ]
+  [ -n "$(find "$STATE/protected-edits" -name .agents)" ]
+}
+
+@test "the generated signpost is never committed, and the cycle after still sends nothing for it" {
+  run_sync_cycle; run_sync_cycle
+  ! origin ls-tree -r --name-only main | grep -q "READ ME FIRST"
+}
+
+# --- the ruleset as a second layer ------------------------------------------------------------
+
+@test "a push the ruleset refuses is rebuilt without the protected part, tried once more, and the rest lands" {
+  install_ruleset_hook
+  chmod u+w "$MIRROR/CLAUDE.md"; echo hacked >> "$MIRROR/CLAUDE.md"; echo ok > "$MIRROR/company/new-ok.md"
+  git -C "$MIRROR" add -A; git_commit "$MIRROR" "made by hand: protected and open together"
+  run_sync_cycle
+  origin show main:company/new-ok.md | grep -q ok
+  ! origin show main:CLAUDE.md | grep -q hacked
+  ! grep -q hacked "$MIRROR/CLAUDE.md"
+  grep -rq hacked "$STATE/protected-edits"
+  grep -q "GitHub refused protected Brain paths" "$LOG"
+  [ "$(cat "$BRAIN_ROOT/origin-mirror.git/pre-receive-calls" | wc -l | tr -d ' ')" = 2 ]   # one refusal, one success
+  run_sync_cycle; run_sync_cycle
+  [ "$(cat "$BRAIN_ROOT/origin-mirror.git/pre-receive-calls" | wc -l | tr -d ' ')" = 2 ]   # and never again
+}
+
+@test "a refusal the engine cannot repair is parked: the same commits are not pushed cycle after cycle" {
+  install_ruleset_hook refuse-everything
+  echo "an open page" > "$MIRROR/company/open.md"
+  run run_sync_cycle                               # commits, pushes once, is refused
+  [ "$status" -ne 0 ]
+  local calls; calls=$(wc -l < "$BRAIN_ROOT/origin-mirror.git/pre-receive-calls" | tr -d ' ')
+  [ "$calls" = 1 ]
+  run run_sync_cycle; run run_sync_cycle
+  [ "$(wc -l < "$BRAIN_ROOT/origin-mirror.git/pre-receive-calls" | tr -d ' ')" = "$calls" ]
+  grep -q "not pushing them again" "$LOG"
+  [ "$(git -C "$MIRROR" rev-list --count origin/main..HEAD)" = 1 ]   # the person's work is still there
+  # something changes upstream and the cause is fixed: it goes out again by itself
+  rm "$BRAIN_ROOT/origin-mirror.git/hooks/pre-receive"
+  local other; other=$(mktemp -d); git clone -q "$BRAIN_ROOT/origin-mirror.git" "$other"
+  echo "colleague" > "$other/company/c.md"; git -C "$other" add -A; git_commit "$other" colleague; git -C "$other" push -q origin main
+  rm -rf "$other"
+  run_sync_cycle
+  origin show main:company/open.md | grep -q "an open page"
+}
+
+# --- read-only: today's behaviour, and no lost text ---------------------------------------------
+
+@test "a key that goes back to read-only: unsent work is kept in brain-unsent, then the folder mirrors origin again" {
+  echo "committed but unsent" >> "$MIRROR/sub/file.txt"; git -C "$MIRROR" add -A; git_commit "$MIRROR" unsent
+  echo "dirty" > "$MIRROR/company/brand-rules.md"
+  echo "brand new" > "$MIRROR/company/fresh.md"
+  make_brain_readonly
+  run_sync_cycle
+  [ "$(git -C "$MIRROR" rev-parse HEAD)" = "$(origin rev-parse main)" ]
+  [ ! -e "$MIRROR/company/fresh.md" ]
+  [ ! -e "$STATE/brain-writable" ]
+  run bash -c "echo x > '$MIRROR/company/z.md'" 2>/dev/null; [ "$status" -ne 0 ]
+  local d; d=$(ls -d "$STATE"/brain-unsent/*)
+  grep -q dirty "$d/files/company/brand-rules.md"
+  grep -q "brand new" "$d/files/company/fresh.md"
+  grep -q "committed but unsent" "$d/files/sub/file.txt"
+  grep -q "committed but unsent" "$d/changes.patch"
+  grep -q "can no longer change" "$MARK"
+  ! origin show main:sub/file.txt | grep -q "committed but unsent"
+  run_sync_cycle                                    # a second read-only cycle keeps nothing new
+  [ "$(ls "$STATE/brain-unsent" | wc -l | tr -d ' ')" = 1 ]
+}
+
+@test "a read-only Mac that never wrote anything keeps nothing and behaves as the mirror always did" {
+  make_brain_readonly
+  run_sync_cycle
+  [ ! -d "$STATE/brain-unsent" ] || [ -z "$(ls -A "$STATE/brain-unsent")" ]
+  [ ! -f "$MARK" ]
+  run bash -c "echo hi > '$MIRROR/sub/newfile.txt'" 2>/dev/null; [ "$status" -ne 0 ]
+  run bash -c "echo hi >> '$MIRROR/CLAUDE.md'" 2>/dev/null; [ "$status" -ne 0 ]
+  grep -q "Save it in the team folder" "$MIRROR/READ ME FIRST.txt"
+}
+
+@test "upgrading the key switches a read-only mirror to editable on the next cycle, with protected paths still locked" {
+  make_brain_readonly; run_sync_cycle
+  run bash -c "echo hi > '$MIRROR/company/z.md'" 2>/dev/null; [ "$status" -ne 0 ]
+  make_brain_writable; run_sync_cycle
+  [ -e "$STATE/brain-writable" ]
+  echo hi > "$MIRROR/company/z.md"
+  run bash -c "echo x >> '$MIRROR/CLAUDE.md'" 2>/dev/null; [ "$status" -ne 0 ]
+  run_sync_cycle
+  origin show main:company/z.md | grep -q hi
+}
+
+@test "a probe that cannot tell keeps the last mode instead of resetting a writable Mac" {
+  echo "work" > "$MIRROR/company/w.md"
+  printf '#!/bin/bash\necho "ssh: connect to host github.com port 22: Operation timed out" >&2\nexit 255\n' > "$BRAIN_ROOT/rp-unknown.sh"
+  chmod +x "$BRAIN_ROOT/rp-unknown.sh"
+  git -C "$MIRROR" config remote.origin.receivepack "$BRAIN_ROOT/rp-unknown.sh"
+  run run_sync_cycle
+  [ -e "$STATE/brain-writable" ]
+  [ -f "$MIRROR/company/w.md" ]
+  grep -q "could not tell whether this Mac may write" "$LOG"
+}
+
+# --- every team/ safeguard, on the Brain -------------------------------------------------------------
+
+@test "a file that looks like a secret is kept out of the Brain and the person is told" {
+  printf 'key=AKIAABCDEFGHIJKLMNOP\n' > "$MIRROR/company/oops.md"
+  echo fine > "$MIRROR/company/fine.md"
+  run_sync_cycle
+  ! origin ls-tree -r --name-only main | grep -q oops.md
+  origin show main:company/fine.md >/dev/null
+  [ -f "$MIRROR/company/oops.md" ]
+  grep -q "password or access key" "$MARK"
+  grep -q "Serlinolab_Brain" "$MARK"
+}
+
+@test "a file over 10 MB is left out of the Brain and the person is told" {
+  dd if=/dev/zero of="$MIRROR/company/huge.bin" bs=1048576 count=11 2>/dev/null
+  echo fine > "$MIRROR/company/fine.md"
+  run_sync_cycle
+  ! origin ls-tree -r --name-only main | grep -q huge.bin
+  origin show main:company/fine.md >/dev/null
+  grep -q "too big to share" "$MARK"
+  grep -q "huge.bin" "$MARK"
+}
+
+@test "a big file that is already in the Brain does not raise a false alarm" {
+  rm -f "$STATE/brain_oversized_rejects"
+  run_sync_cycle
+  [ ! -f "$MARK" ]
+}
+
+@test "OS junk is never committed from the Brain, and junk already in an unpushed commit is dropped" {
+  mkdir -p "$MIRROR/company/.AppleDouble"; echo j > "$MIRROR/company/.DS_Store"; echo j > "$MIRROR/company/.AppleDouble/x"
+  echo real > "$MIRROR/company/real.md"
+  git -C "$MIRROR" add -f company/.DS_Store; git_commit "$MIRROR" "junk by an older engine"
+  run_sync_cycle
+  origin show main:company/real.md >/dev/null
+  ! origin log --all --name-only | grep -q 'DS_Store\|AppleDouble'
+  [ -f "$MIRROR/company/.DS_Store" ]                 # still on disk, only out of git
+}
+
+@test "two Macs editing the same page at once keep both versions, with no alarm" {
+  setup_second_brain_mac
+  echo "line from alice" >> "$MIRROR/company/brand-rules.md"
+  echo "line from karl" >> "$ROOT2/Serlinolab_Brain/company/brand-rules.md"
+  run_sync_cycle
+  run_second_mac_sync_cycle
+  run_sync_cycle
+  for f in "$MIRROR/company/brand-rules.md" "$ROOT2/Serlinolab_Brain/company/brand-rules.md"; do
+    grep -q "line from alice" "$f"; grep -q "line from karl" "$f"
+  done
+  origin show main:company/brand-rules.md | grep -q "line from karl"
+  [ ! -f "$ROOT2/SOMETHING NEEDS YOUR ATTENTION.txt" ]
+  grep -q "Serlinolab_Brain/company/brand-rules.md" "$STATE2/team_changes.log"
+}
+
+@test "a binary page edited on two Macs is parked with both copies, and the person is told" {
+  setup_second_brain_mac
+  { printf '\x00'; head -c 64 /dev/urandom; } > "$MIRROR/company/pic.bin"
+  { printf '\x00'; head -c 64 /dev/urandom; } > "$ROOT2/Serlinolab_Brain/company/pic.bin"
+  cp "$ROOT2/Serlinolab_Brain/company/pic.bin" "$BRAIN_ROOT/karl.bin"
+  run_sync_cycle
+  run run_second_mac_sync_cycle
+  [ "$status" -ne 0 ]
+  cmp -s "$ROOT2/Serlinolab_Brain/company/pic.bin" "$BRAIN_ROOT/karl.bin"           # hers stays on disk
+  local saved; saved=$(find "$STATE2/brain-conflicts" -name pic.bin | head -1)
+  [ -n "$saved" ]
+  [ "$(cat "$STATE2/brain_conflict_attempts")" = 1 ]
+  grep -q "changed by you and by a colleague" "$ROOT2/SOMETHING NEEDS YOUR ATTENTION.txt"
+  grep -q "Serlinolab_Brain" "$ROOT2/SOMETHING NEEDS YOUR ATTENTION.txt"
+  [ ! -e "$STATE2/conflict_attempts" ]                                              # team/'s own latch is separate
+}
+
+@test "an autostash that cannot be reapplied is reported and never pushed" {
+  local other; other=$(mktemp -d); git clone -q "$BRAIN_ROOT/origin-mirror.git" "$other"
+  echo "colleague" > "$other/sub/file.txt"; git -C "$other" add -A; git_commit "$other" colleague; git -C "$other" push -q origin main
+  rm -rf "$other"
+  echo "dirty local edit" > "$MIRROR/sub/file.txt"      # tracked, dirty, uncommitted - what autostash stashes
+  run bash -c "source '$REPO_ROOT/lib/common.sh'; source '$REPO_ROOT/lib/secretscan.sh'; \
+    source '$REPO_ROOT/lib/team_layout.sh'; source '$REPO_ROOT/lib/complete_setup.sh'; \
+    source '$REPO_ROOT/lib/sync.sh'; sync_mirror; rc=\$?; update_attention_marker; exit \$rc"
+  [ "$status" -ne 0 ]
+  [ -f "$STATE/brain_autostash_conflict" ]
+  grep -q "could not be" "$MARK"
+  grep -q "Serlinolab_Brain" "$MARK"
+  git -C "$MIRROR" stash list | grep -q .
+  ! origin show main:sub/file.txt | grep -q "<<<<<<<"
+}
+
+@test "a Brain whose origin was swapped is neither committed to nor pushed from" {
+  git -C "$MIRROR" remote set-url origin "$BRAIN_ROOT/some-other-repo.git"
+  echo "my note" > "$MIRROR/company/mine.md"
+  run run_sync_cycle
+  git -C "$MIRROR" status --porcelain | grep -qF "?? company/mine.md"
+  grep -q "mirror origin does not match the expected remote" "$LOG"
+  grep -qi "company folder" "$MARK"
+}
+
+@test "with no network the Brain edit is still committed locally, and goes out when it returns" {
+  echo "written offline" > "$MIRROR/company/offline.md"
+  mv "$BRAIN_ROOT/origin-mirror.git" "$BRAIN_ROOT/origin-mirror.git.moved"
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/no-such-remote" run_sync_cycle
+  [ "$(git -C "$MIRROR" rev-list --count origin/main..HEAD)" = 1 ]
+  mv "$BRAIN_ROOT/origin-mirror.git.moved" "$BRAIN_ROOT/origin-mirror.git"
+  run_sync_cycle
+  origin show main:company/offline.md | grep -q offline
+}
+
+@test "no network call precedes commit_brain in the real entry point" {
+  local at head
+  at=$(grep -n '^commit_brain ' "$REPO_ROOT/sync.sh" | cut -d: -f1)
+  [ -n "$at" ]
+  head=$(sed -n "1,$((at - 1))p" "$REPO_ROOT/sync.sh" | grep -v '^[[:space:]]*#')
+  run grep -nE '\bonline\b|fetch|push|pull|clone|ls-remote|curl' <<<"$head"
+  [ "$status" -ne 0 ]
+}
+
+# --- heartbeat ---------------------------------------------------------------------------------
+
+@test "a Brain push that fails shows in the heartbeat the way a team failure does" {
+  make_fake_team_repo
+  run_sync_cycle
+  local branch="status/testperson-$(cat "$STATE/machine-id")"
+  printf '#!/bin/bash\necho "remote: some other failure" >&2\nexit 1\n' > "$BRAIN_ROOT/origin-mirror.git/hooks/pre-receive"
+  chmod +x "$BRAIN_ROOT/origin-mirror.git/hooks/pre-receive"
+  echo "an open page" > "$MIRROR/company/open.md"
+  run run_sync_cycle
+  [ "$status" -ne 0 ]
+  git -C "$BRAIN_ROOT/origin-team.git" show "$branch:status.txt" | grep -q "result: problem - cycle exit 1"
+  grep -q "push failed" "$LOG"
+}

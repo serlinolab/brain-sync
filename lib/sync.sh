@@ -1,5 +1,7 @@
 #!/bin/bash
 # Mirror sync, team sync, staleness, and the company README. Sourced by sync.sh.
+# shellcheck source=lib/brain_write.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brain_write.sh"
 
 online(){ git ls-remote --exit-code "$ONLINE_CHECK_REMOTE" HEAD >/dev/null 2>&1; }
 
@@ -54,7 +56,19 @@ protect_readonly(){
 # otherwise delete it (untracked). MAX-1515 (amended): the mirror lives beside team/, not
 # nested inside it.
 company_readme(){
-  cat > "$MIRROR/READ ME FIRST.txt" <<'TXT'
+  if [ "${1:-}" = writable ]; then
+    # MAX-1790: this Mac may write to the Brain (see lib/brain_write.sh).
+    cat > "$MIRROR/$BRAIN_SIGNPOST" <<'TXT'
+This folder is the company's shared knowledge. Save a change here and
+it reaches everyone within a few minutes; theirs reach you the same way.
+
+Some pages are locked on purpose: the rules, the skills, the method
+folder, and the pages that update themselves. If you change one, the
+change is not shared and your text is kept aside for you.
+TXT
+    return
+  fi
+  cat > "$MIRROR/$BRAIN_SIGNPOST" <<'TXT'
 This folder is the company's shared knowledge. It updates on its own -
 you don't need to do anything to keep it current.
 
@@ -82,9 +96,24 @@ sync_mirror(){
   local rc=0
   if ! git -C "$MIRROR" fetch --quiet origin; then
     log "mirror fetch failed"
-    protect_readonly "$MIRROR"
+    [ -e "$BRAIN_WRITABLE" ] || protect_readonly "$MIRROR"   # a writable Brain keeps its person's files writable
     return 1
   fi
+  # MAX-1790: can this Mac's key push to the Brain? Yes: two-way (lib/brain_write.sh). No: the
+  # read-only mirror below, as before. "Cannot tell" keeps whatever the last cycle decided.
+  brain_probe_push; rc=$?
+  if [ "$rc" -eq 2 ]; then
+    log "could not tell whether this Mac may write to the Brain; keeping the last mode"
+    [ -e "$BRAIN_WRITABLE" ] && rc=0 || rc=1
+  fi
+  if [ "$rc" -eq 0 ]; then
+    _sync_brain_two_way
+    return $?
+  fi
+  # Read-only. A Mac that WAS writable (key turned back to read-only) may hold unsent text.
+  brain_preserve_unsent
+  rm -f "$BRAIN_WRITABLE"
+  rc=0
   chmod -R u+w "$MIRROR" 2>/dev/null || true   # git needs write only after the fetch
   git -C "$MIRROR" reset --hard --quiet origin/main || rc=1
   [ "$rc" -eq 0 ] && git -C "$MIRROR" clean -ffdq || rc=1
@@ -129,12 +158,31 @@ commit_local(){
     log "team folder configuration is not complete; skipping this cycle"
     return 2
   fi
-  cd "$TEAM" || return 1
+  _commit_repo "$TEAM" team
+}
+
+_commit_as_person(){
+  GIT_AUTHOR_NAME="$GIT_IDENTITY_NAME" GIT_AUTHOR_EMAIL="$GIT_IDENTITY_EMAIL" \
+    GIT_COMMITTER_NAME="$GIT_IDENTITY_NAME" GIT_COMMITTER_EMAIL="$GIT_IDENTITY_EMAIL" \
+    git commit -qm "$1"
+}
+
+# $1 = repo dir, $2 = team|brain. The body commit_local always had, parameterised for the Brain
+# (MAX-1790): same OS-junk heal, size limit, secret scan and identity. The Brain additionally
+# keeps its generated signpost out of git and never stages a protected path.
+_commit_repo(){
+  local dir="$1" kind="$2" rejects="$STATE/secret_rejects" oversized="$STATE/oversized_rejects"
+  local -a exclude_lines=()
+  if [ "$kind" = brain ]; then
+    rejects="$STATE/brain_secret_rejects"; oversized="$STATE/brain_oversized_rejects"
+    exclude_lines=("READ ME FIRST.txt")
+  fi
+  cd "$dir" || return 1
   # 2026-09-24 incident: heal an already-set-up Mac too, not just a fresh clone -
   # complete_setup's write_team_exclude only ever runs once, at configure time, so an
   # already-protected team/ (team_is_protected true, complete_setup skipped entirely) would
   # otherwise never get it. Regenerating every cycle is one cheap file write.
-  write_team_exclude "$TEAM" || { log "could not write the OS-junk exclude file"; return 1; }
+  write_team_exclude "$dir" ${exclude_lines[@]+"${exclude_lines[@]}"} || { log "could not write the OS-junk exclude file"; return 1; }
   # Untrack any OS junk a colleague or an earlier version of this engine already committed -
   # the exclude file above only stops a NEW untracked file from being added; an already-
   # tracked one stays "modified" (and the tree "dirty") every time Finder rewrites it. Keeps
@@ -145,26 +193,26 @@ commit_local(){
   git rm -r --cached --ignore-unmatch -q -- "${junk_specs[@]}" >/dev/null 2>&1 || true
   local big secret rc=0
   local -a exclude_specs=()
-  while IFS= read -r spec; do exclude_specs+=("$spec"); done < <(team_add_exclude_pathspecs)
+  while IFS= read -r spec; do exclude_specs+=("$spec"); done < <(team_add_exclude_pathspecs; [ "$kind" = brain ] && brain_protected_excludes)
   git add -A -- . "${exclude_specs[@]}" || { log "git add failed"; return 1; }
+  rm -f "$oversized"
   while IFS= read -r -d '' big; do
     log "REJECT oversized: ${big#./}"
+    printf '%s\n' "${big#./}" >> "$oversized"
     git reset -q -- "$big" || rc=1
   done < <(find . -path ./.git -prune -o -type f -size +10240k -print0 2>/dev/null)
   [ "$rc" -eq 0 ] || return 1
-  rm -f "$STATE/secret_rejects"
+  rm -f "$rejects"
   while IFS= read -r -d '' secret; do
     if secret_scan_file "$secret"; then
       log "REJECT secret: $secret"
       git reset -q -- "$secret" || rc=1
-      printf '%s\n' "$secret" >> "$STATE/secret_rejects"
+      printf '%s\n' "$secret" >> "$rejects"
     fi
   done < <(git diff --cached --name-only -z)
   [ "$rc" -eq 0 ] || return 1
   if ! git diff --cached --quiet; then
-    GIT_AUTHOR_NAME="$GIT_IDENTITY_NAME" GIT_AUTHOR_EMAIL="$GIT_IDENTITY_EMAIL" \
-      GIT_COMMITTER_NAME="$GIT_IDENTITY_NAME" GIT_COMMITTER_EMAIL="$GIT_IDENTITY_EMAIL" \
-      git commit -qm "notes $(date -u +%F' '%T)Z" || return 1
+    _commit_as_person "notes $(date -u +%F' '%T)Z" || return 1
   fi
 }
 
@@ -173,11 +221,12 @@ commit_local(){
 # they used to compute it separately, which made the marker immune to a defect in stale_check.
 # Echoes the age in whole hours, or nothing when there is no unsynced work.
 unsynced_age_hours(){
-  [ -d "$TEAM/.git" ] || return 0
+  local dir="${1:-$TEAM}"   # MAX-1790: the Brain asks about its own repo
+  [ -d "$dir/.git" ] || return 0
   local ahead oldest
-  ahead=$(cd "$TEAM" && git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+  ahead=$(cd "$dir" && git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
   [ "$ahead" -gt 0 ] || return 0
-  oldest=$(cd "$TEAM" && git log --format=%ct origin/main..HEAD | tail -1)
+  oldest=$(cd "$dir" && git log --format=%ct origin/main..HEAD | tail -1)
   echo $(( ($(date +%s) - oldest) / 3600 ))
 }
 
@@ -199,7 +248,7 @@ save_conflict_copies(){
   local ts; ts=$(date -u +%FT%TZ)
   local path dest
   while IFS= read -r -d '' path; do
-    dest="$CONFLICTS/$ts/$path"
+    dest="${CONFLICTS_DIR:-$CONFLICTS}/$ts/$path"
     mkdir -p "$(dirname "$dest")"
     git show ":2:$path" > "$dest" 2>/dev/null || git show "origin/main:$path" > "$dest" 2>/dev/null
     log "conflict: saved incoming copy of $path"
@@ -257,6 +306,8 @@ heal_local_junk_history(){
 # (save_conflict_copies) and deciding what "binary" means (git's own judgement, never an
 # extension list - see is_conflict_binary below).
 team_note(){ printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$STATE/team_changes.log"; }
+# MAX-1790: the Brain shares this log; NOTE_PREFIX ("Serlinolab_Brain/") tells its lines apart.
+
 
 # Case 2: text vs binary is git's own call, not ours - a file is binary when `git diff
 # --numstat` between the two conflicting blobs prints "-" for the added/deleted columns
@@ -288,7 +339,7 @@ resolve_conflict_file(){
     mkdir -p "$(dirname "$path")"
     if [ -n "$b2" ]; then git show ":2:$path" > "$path"; else git show ":3:$path" > "$path"; fi
     git add -- "$path" || return 1
-    team_note "$path was removed on one side and changed on the other; the changed version was kept."
+    team_note "${NOTE_PREFIX:-}$path was removed on one side and changed on the other; the changed version was kept."
     return 0
   fi
   if is_conflict_binary "$b2" "$b3"; then
@@ -306,7 +357,7 @@ resolve_conflict_file(){
   git merge-file --union "$path" "$base_file" "$theirs_file" >/dev/null 2>&1
   rm -f "$base_file" "$theirs_file"
   git add -- "$path" || return 1
-  team_note "Two people edited $path at the same time; both versions were kept in the file."
+  team_note "Two people edited ${NOTE_PREFIX:-}$path at the same time; both versions were kept in the file."
   return 0
 }
 
@@ -389,11 +440,22 @@ sync_team(){
     log "origin/main still unknown after fetch; not pushing this cycle"
     return 1
   fi
+  _sync_after_fetch "$TEAM" team "$CONFLICT_STATE" "$CONFLICT_PARK_SHAS" "$AUTOSTASH_CONFLICT_STATE"
+}
+
+# Everything sync_team does once it holds a fresh origin/main: heal, rebase (auto-merging text
+# conflicts, parking binary ones), autostash check, push. MAX-1790: shared with the Brain.
+# $1 dir, $2 label for log lines, $3-$5 the repo's own conflict / park-shas / autostash state
+# files, $6 optional: the push hook (brain_push_hook, lib/brain_write.sh) - asked before the push
+# whether to go ahead, and after a refusal whether to try once more.
+_sync_after_fetch(){
+  local dir="$1" label="$2" conflict_state="$3" park_shas="$4" autostash_state="$5" hook="${6:-}"
+  cd "$dir" || return 1
   # 2026-09-24 incident: clean any junk-only local history, now bounded by the fresh
   # origin/main above.
-  local healed; healed=$(heal_local_junk_history "$TEAM")
+  local healed; healed=$(heal_local_junk_history "$dir")
   local n
-  n=$(cat "$CONFLICT_STATE" 2>/dev/null || echo 0)
+  n=$(cat "$conflict_state" 2>/dev/null || echo 0)
   local already_rebased=0
   # Codex re-review of 0b5862b: captured BEFORE either rebase attempt below - a stash that was
   # already sitting here for an unrelated reason (a person's own `git stash`, or an earlier
@@ -421,13 +483,13 @@ sync_team(){
     local origin_sha local_sha recorded_shas
     origin_sha=$(git rev-parse origin/main 2>/dev/null)
     local_sha=$(git rev-parse HEAD 2>/dev/null)
-    recorded_shas=$(cat "$CONFLICT_PARK_SHAS" 2>/dev/null || echo "")
+    recorded_shas=$(cat "$park_shas" 2>/dev/null || echo "")
     if [ -n "$recorded_shas" ] && [ "$recorded_shas" = "$origin_sha $local_sha" ]; then
       log "still parked at the bound; origin/main and local HEAD unchanged since last attempt - not retrying"
       return 3
     fi
     if auto_rebase_onto_origin; then
-      rm -f "$CONFLICT_STATE" "$CONFLICT_PARK_SHAS"
+      rm -f "$conflict_state" "$park_shas"
       log "cleared a parked conflict on retry${healed:+ (local history also cleaned of OS junk)}; rebase now succeeds"
       n=0
       already_rebased=1
@@ -438,7 +500,7 @@ sync_team(){
       # write a second copy-dir for one attempt if the two calls straddle a second boundary,
       # both violating "at most one new conflict-copy set per attempt".
       git rebase --abort 2>/dev/null || true
-      echo "$origin_sha $local_sha" > "$CONFLICT_PARK_SHAS"
+      echo "$origin_sha $local_sha" > "$park_shas"
       log "a park at the bound survives a fresh attempt - a genuine (binary) conflict remains; still not retrying until a human intervenes"
       return 3
     fi
@@ -453,12 +515,12 @@ sync_team(){
       # See the comment above: auto_rebase_onto_origin already saved the incoming copy for
       # this attempt's unmerged files, so no second save_conflict_copies call here either.
       git rebase --abort 2>/dev/null || true
-      echo $((n+1)) > "$CONFLICT_STATE"
+      echo $((n+1)) > "$conflict_state"
       log "CONFLICT parked (attempt $((n+1))/$MAX_CONFLICT_ATTEMPTS); local content retained"
       return 3
     fi
   fi
-  rm -f "$CONFLICT_STATE" "$CONFLICT_PARK_SHAS"
+  rm -f "$conflict_state" "$park_shas"
   # Codex review of aea244e, non-blocking finding 6 (tightened by the re-review of 0b5862b): a
   # rebase that succeeds can still leave the autostash NOT fully reapplied - if popping it
   # conflicts with the new HEAD, `git rebase --autostash` still exits 0 (only a warning is
@@ -469,25 +531,37 @@ sync_team(){
   # unrelated pre-existing stash must never trip this or block the push.
   local stash_after; stash_after=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
   if [ "$stash_after" -gt "$stash_before" ]; then
-    : > "$AUTOSTASH_CONFLICT_STATE"
+    : > "$autostash_state"
     log "the autostash could not be reapplied cleanly after the rebase; local changes are preserved in 'git stash' - refusing to push until a human resolves this"
     return 1
   fi
   local fetch_url push_url
-  fetch_url=$(git remote get-url origin 2>/dev/null) || { log "team remote missing"; return 1; }
+  fetch_url=$(git remote get-url origin 2>/dev/null) || { log "$label remote missing"; return 1; }
   while IFS= read -r push_url; do
     if [ "$push_url" != "$fetch_url" ]; then
-      log "team push URL does not match fetch URL; refusing push"
+      log "$label push URL does not match fetch URL; refusing push"
       return 1
     fi
   done < <(git remote get-url --push --all origin 2>/dev/null)
   local push_err
+  if [ -n "$hook" ]; then
+    "$hook" gate
+    case $? in
+      1) return 1 ;;
+      2) log "$label at $(git rev-parse --short HEAD)"; return 0 ;;
+    esac
+  fi
   if ! push_err=$(git push --quiet origin main 2>&1); then
     log "push failed: ${push_err:-no error output}"
-    return 1
+    if [ -n "$hook" ] && "$hook" refused "$push_err"; then
+      push_err=$(git push --quiet origin main 2>&1) || { log "push failed again: ${push_err:-no error output}"; return 1; }
+    else
+      return 1
+    fi
   fi
-  log "team at $(git rev-parse --short HEAD)"
+  log "$label at $(git rev-parse --short HEAD)"
 }
+
 
 update_attention_marker(){
   local big age_h secret_first
@@ -533,6 +607,7 @@ update_attention_marker(){
       return
     fi
   fi
+  brain_attention && return   # MAX-1790
   # MAX-1515 change A: setup itself (the team clone + its configuration, and the mirror clone -
   # see lib/complete_setup.sh) can sit pending for a while waiting on a deploy key Max has not
   # registered yet. Plain words, no git vocabulary - this can fire before team/ even exists.
