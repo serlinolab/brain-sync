@@ -45,7 +45,9 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   repo_exists "$BRAIN_ORG/brain-team"
   [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
   [ "$(key_line_count "$BRAIN_ORG/brain-team")" = 1 ]
-  grep -q $'\ttrue$' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys"
+  # MAX-1790: the Brain key is registered WITH write access now (it was read-only before)
+  grep -q $'\tfalse$' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys"
+  ! grep -q $'\ttrue$' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys"
   grep -q $'\tfalse$' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys"
 }
 
@@ -87,15 +89,15 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ] || [ -z "$(cat "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys")" ]
 }
 
-@test "refuses a read_only mismatch on an already-registered key, and changes nothing" {
+@test "refuses a read_only mismatch on an already-registered team key, and changes nothing" {
   run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -eq 0 ]
-  # flip the mirror key's stored read_only to false by hand, as if it had been mis-registered
-  sed -i '' 's/\ttrue$/\tfalse/' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" 2>/dev/null \
-    || sed -i 's/\ttrue$/\tfalse/' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys"
+  # flip the team key's stored read_only to true by hand, as if it had been mis-registered
+  sed -i '' 's/\tfalse$/\ttrue/' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys" 2>/dev/null \
+    || sed -i 's/\tfalse$/\ttrue/' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys"
   run bash "$REPO_ROOT/provision.sh" "$LINE"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"read_only=false"*"expected read_only=true"* ]] || false
+  [[ "$output" == *"read_only=true"*"expected read_only=false"* ]] || false
   [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
   [ "$(key_line_count "$BRAIN_ORG/brain-team")" = 1 ]   # phase 1 failure - the team key is untouched too
 }
@@ -301,4 +303,93 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   [ "$status" -ne 0 ]
   if repo_exists "$BRAIN_ORG/brain-team"; then false; fi
   [ ! -s "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" ]
+}
+
+# --- MAX-1790: the Brain key is writable; an existing read-only one is upgraded, nothing else is ---
+
+BRAIN_KEYS() { printf '%s' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys"; }
+# a Mac provisioned before MAX-1790: a read-only Brain key, with another Mac's key ahead of it
+seed_readonly_brain_key() {
+  printf 'brain-mirror bob bobs-mac\tssh-ed25519 AAAAother brain-mirror-bobs-mac\ttrue\n' > "$(BRAIN_KEYS)"
+  printf 'brain-mirror alice alices-mac\tssh-ed25519 AAAAmirror brain-mirror-alices-mac\ttrue\n' >> "$(BRAIN_KEYS)"
+}
+
+@test "re-running a Mac's pasted line upgrades its read-only Brain key to write access, same key and title" {
+  seed_readonly_brain_key
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"upgrade"* ]] || false
+  [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 2 ]
+  grep -qF $'brain-mirror bob bobs-mac\tssh-ed25519 AAAAother brain-mirror-bobs-mac\ttrue' "$(BRAIN_KEYS)"   # bob's key untouched
+  awk -F'\t' '$1=="brain-mirror alice alices-mac" && $2 ~ /^ssh-ed25519 AAAAmirror/ && $3=="false"{f=1} END{exit !f}' "$(BRAIN_KEYS)"
+  [ "$(key_line_count "$BRAIN_ORG/brain-team")" = 1 ]
+  run bash "$REPO_ROOT/provision.sh" "$LINE"            # and it is idempotent
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already registered"* ]] || false
+  [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 2 ]
+}
+
+@test "--dry-run says it would upgrade the read-only Brain key and changes nothing" {
+  seed_readonly_brain_key
+  local before; before=$(cat "$(BRAIN_KEYS)")
+  run bash "$REPO_ROOT/provision.sh" --dry-run "$LINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"will upgrade deploy key 'brain-mirror alice alices-mac'"* ]] || false
+  [ "$(cat "$(BRAIN_KEYS)")" = "$before" ]
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team" ]
+}
+
+@test "--upgrade-brain-key upgrades by title, with nothing from the Mac, and leaves every other key alone" {
+  seed_readonly_brain_key
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror alice alices-mac"
+  [ "$status" -eq 0 ]
+  [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 2 ]
+  grep -qF $'brain-mirror bob bobs-mac\tssh-ed25519 AAAAother brain-mirror-bobs-mac\ttrue' "$(BRAIN_KEYS)"
+  awk -F'\t' '$1=="brain-mirror alice alices-mac" && $2 ~ /^ssh-ed25519 AAAAmirror/ && $3=="false"{f=1} END{exit !f}' "$(BRAIN_KEYS)"
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team" ]                  # no team repo, no team key
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror alice alices-mac"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already writable"* ]] || false
+  [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 2 ]
+}
+
+@test "--upgrade-brain-key --dry-run prints what it would do and mutates nothing" {
+  seed_readonly_brain_key
+  local before; before=$(cat "$(BRAIN_KEYS)")
+  run bash "$REPO_ROOT/provision.sh" --dry-run --upgrade-brain-key "brain-mirror alice alices-mac"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would delete deploy key"*"brain-mirror alice alices-mac"*"read_only=false"* ]] || false
+  [ "$(cat "$(BRAIN_KEYS)")" = "$before" ]
+}
+
+@test "--upgrade-brain-key refuses an unknown title, a failed lookup, and a repo that is not the private Brain, changing nothing" {
+  seed_readonly_brain_key
+  local before; before=$(cat "$(BRAIN_KEYS)")
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror nobody nowhere"
+  [ "$status" -ne 0 ]; [[ "$output" == *"no deploy key titled"* ]] || false
+  FAKE_GH_FAIL_KEYS_LOOKUP=1 run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror alice alices-mac"
+  [ "$status" -ne 0 ]; [[ "$output" == *"could not look up existing deploy keys"* ]] || false
+  printf 'false\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain"
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror alice alices-mac"
+  [ "$status" -ne 0 ]; [[ "$output" == *"not private"* ]] || false
+  [ "$(cat "$(BRAIN_KEYS)")" = "$before" ]
+}
+
+@test "the upgrade never touches a title collision with a different key, nor a team key" {
+  seed_readonly_brain_key
+  local other="SERLINO-BRAIN-SETUP person=alice machine=alices-mac mirror_key=ssh-ed25519 AAAAdifferent brain-mirror-alices-mac team_key=ssh-ed25519 AAAAteam brain-team-alice"
+  local before; before=$(cat "$(BRAIN_KEYS)")
+  run bash "$REPO_ROOT/provision.sh" "$other"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"different key"* ]] || false
+  [ "$(cat "$(BRAIN_KEYS)")" = "$before" ]
+  # a read-only TEAM key is refused, not upgraded: the upgrade exists for the Brain key only
+  rm -f "$(BRAIN_KEYS)"
+  printf 'true\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team"; touch "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.readme"
+  printf 'brain-team alice alices-mac\tssh-ed25519 AAAAteam brain-team-alice\ttrue\n' > "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys"
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"expected read_only=false"* ]] || false
+  [ "$(key_line_count "$BRAIN_ORG/brain-team")" = 1 ]
+  [ ! -s "$(BRAIN_KEYS)" ]                              # phase 1 failed: no Brain key was registered either
 }

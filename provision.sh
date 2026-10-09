@@ -4,6 +4,12 @@
 # Max's own is needed, since deploy keys are registered through the GitHub API.
 #
 #   ./provision.sh [--dry-run] "SERLINO-BRAIN-SETUP person=alice machine=alices-mac mirror_key=ssh-ed25519 AAAA... brain-mirror-alices-mac team_key=ssh-ed25519 AAAA... brain-team-alice"
+#
+# MAX-1790: the Brain key is registered WITH write access (the Mac edits the Brain directly; the
+# GitHub push ruleset keeps protected paths out). A Mac provisioned earlier holds a read-only key:
+# re-running this with its pasted line upgrades it, or, with nothing from that Mac, by title:
+#
+#   ./provision.sh [--dry-run] --upgrade-brain-key "brain-mirror alice alices-mac"
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GH="${GH:-gh}"
@@ -14,16 +20,49 @@ TEAM_README_TEMPLATE="$SCRIPT_DIR/templates/team-repo-README.md"
 
 DRY_RUN=0
 LINE=""
-for arg in "$@"; do
-  case "$arg" in
+UPGRADE_TITLE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --dry-run) DRY_RUN=1 ;;
-    *) LINE="$arg" ;;
+    --upgrade-brain-key) shift; UPGRADE_TITLE="${1:-}" ;;
+    *) LINE="$1" ;;
   esac
+  shift
 done
-[ -n "$LINE" ] || { echo "Usage: provision.sh [--dry-run] '<pasted SERLINO-BRAIN-SETUP line>'" >&2; exit 1; }
+if [ -z "$LINE" ] && [ -z "$UPGRADE_TITLE" ]; then
+  echo "Usage: provision.sh [--dry-run] '<pasted SERLINO-BRAIN-SETUP line>' | --upgrade-brain-key '<existing key title>'" >&2
+  exit 1
+fi
 
 refuse(){ echo "Refusing: $*" >&2; exit 1; }
 
+# MAX-1790: GitHub cannot flip read_only on an existing deploy key, so the upgrade deletes the
+# read-only key and registers the SAME public key again under the SAME title with write access.
+# The only read_only change this script ever makes, and only for the Brain repo.
+upgrade_key_mutate(){
+  echo "deleting read-only deploy key $1 ('$2') on $MIRROR_REPO, registering the same key again with write access"
+  "$GH" api -X DELETE "repos/$BRAIN_ORG/$MIRROR_REPO/keys/$1" >/dev/null || return 1
+  register_key_mutate "$MIRROR_REPO" "$2" "$3" false
+}
+upgrade_brain_key(){
+  local rows t k ro id
+  rows=$(gh_keys_rows "$MIRROR_REPO") || return 1
+  while IFS=$'\t' read -r t k ro id; do
+    [ "$t" = "$1" ] || continue
+    if [ "$ro" != true ]; then echo "already writable: '$1' on $MIRROR_REPO"; return 0; fi
+    [ -n "$id" ] || { echo "refusing: no id for '$1' on $MIRROR_REPO" >&2; return 1; }
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "would delete deploy key $id ('$1') on $MIRROR_REPO and register the same key again, read_only=false"
+      return 0
+    fi
+    upgrade_key_mutate "$id" "$1" "$k"
+    return
+  done <<<"$rows"
+  echo "refusing: no deploy key titled '$1' on $MIRROR_REPO" >&2
+  return 1
+}
+
+if [ -z "$UPGRADE_TITLE" ]; then
 person=$(printf '%s' "$LINE" | sed -nE 's/.*person=([^ ]*) machine=.*/\1/p')
 machine=$(printf '%s' "$LINE" | sed -nE 's/.*machine=([^ ]*) mirror_key=.*/\1/p')
 mirror_key=$(printf '%s' "$LINE" | sed -nE 's/.*mirror_key=(.*) team_key=.*/\1/p')
@@ -33,6 +72,7 @@ team_key=$(printf '%s' "$LINE" | sed -nE 's/.*team_key=(.*)$/\1/p')
 [[ "$machine" =~ ^[a-zA-Z0-9._-]+$ ]] || refuse "not a valid machine name: '$machine'"
 [[ "$mirror_key" == ssh-ed25519\ * ]] || refuse "mirror_key does not look like an ssh-ed25519 public key"
 [[ "$team_key" == ssh-ed25519\ * ]] || refuse "team_key does not look like an ssh-ed25519 public key"
+fi
 
 # AC-1: re-running is safe. Same title + same key -> success, nothing changes. Same title
 # with a different key, a different read_only flag under the same title/key, or the same key
@@ -53,25 +93,38 @@ team_key=$(printf '%s' "$LINE" | sed -nE 's/.*team_key=(.*)$/\1/p')
 # MAX-1515 fix 1: read-only. Never mutates. Sets $NEED_REGISTER to 0 (already registered
 # correctly - phase 2 has nothing to do) or 1 (phase 2 must register it). The GET this makes is
 # the ONLY deploy-keys lookup for this repo across the whole run - phase 2 must not repeat it.
+#
+# MAX-1790: $5 = 1 allows ONE change of read_only - an existing read-only key on this repo,
+# same title and same key, wanted writable - and reports it as NEED_REGISTER=2 with the key's id
+# in $UPGRADE_KEY_ID. Every other mismatch still refuses, on both repos.
+gh_keys_rows(){
+  "$GH" api --paginate "repos/$BRAIN_ORG/$1/keys" --jq '.[] | [.title,.key,.read_only,.id] | @tsv' 2>/dev/null && return 0
+  echo "refusing: could not look up existing deploy keys on $1 (the gh lookup failed - treated as unknown, never as absent)" >&2
+  return 1
+}
+
 register_key_check(){
-  local repo="$1" title="$2" key="$3" want_ro="$4"
+  local repo="$1" title="$2" key="$3" want_ro="$4" allow_upgrade="${5:-0}"
   local key_material; key_material=$(awk '{print $1, $2}' <<<"$key")
   NEED_REGISTER=1
 
   local rows
-  if ! rows=$("$GH" api --paginate "repos/$BRAIN_ORG/$repo/keys" --jq '.[] | [.title,.key,.read_only] | @tsv' 2>/dev/null); then
-    echo "refusing: could not look up existing deploy keys on $repo (the gh lookup failed - treated as unknown, never as absent)" >&2
-    return 1
-  fi
+  rows=$(gh_keys_rows "$repo") || return 1
 
-  local t k ro material
-  while IFS=$'\t' read -r t k ro; do
+  local t k ro id material
+  while IFS=$'\t' read -r t k ro id; do
     [ -n "$t" ] || continue
     material=$(awk '{print $1, $2}' <<<"$k")
     if [ "$t" = "$title" ]; then
       if [ "$material" != "$key_material" ]; then
         echo "refusing: a deploy key titled '$title' already exists on $repo with a different key" >&2
         return 1
+      fi
+      if [ "$allow_upgrade" = 1 ] && [ "$ro" = true ] && [ "$want_ro" = false ]; then
+        [ -n "$id" ] || { echo "refusing: no id for '$title' on $repo, cannot upgrade it" >&2; return 1; }
+        echo "will upgrade deploy key '$title' on $repo from read-only to read_only=false (delete it, register the same key again)"
+        NEED_REGISTER=2; UPGRADE_KEY_ID="$id"
+        return 0
       fi
       if [ "$ro" != "$want_ro" ]; then
         echo "refusing: '$title' on $repo is registered with read_only=$ro, expected read_only=$want_ro - refusing to change it" >&2
@@ -234,7 +287,7 @@ phase1_checks(){
     *) return 1 ;;   # verify_repo_identity already printed the refusal
   esac
 
-  register_key_check "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || return 1
+  register_key_check "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" false 1 || return 1
   NEED_MIRROR_KEY="$NEED_REGISTER"
 
   if [ "$NEED_CREATE_REPO" -eq 1 ]; then
@@ -250,12 +303,21 @@ phase1_checks(){
 # guarded here - single operator, seconds apart, running this by hand once per new person/Mac.
 phase2_mutate(){
   team_repo_mutate || return 1
-  [ "$NEED_MIRROR_KEY" -eq 1 ] && { register_key_mutate "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || return 1; }
+  # An upgrade deletes first (GitHub refuses the same key twice). If the register then fails,
+  # re-running finds no key under the title and registers it: the Mac loses its key, not its place.
+  [ "$NEED_MIRROR_KEY" -eq 2 ] && { upgrade_key_mutate "$UPGRADE_KEY_ID" "brain-mirror $person $machine" "$mirror_key" || return 1; }
+  [ "$NEED_MIRROR_KEY" -eq 1 ] && { register_key_mutate "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" false || return 1; }
   [ "$NEED_TEAM_KEY" -eq 1 ] && { register_key_mutate "$TEAM_REPO" "brain-team $person $machine" "$team_key" false || return 1; }
   return 0
 }
 
-NEED_CREATE_REPO=0; NEED_README=0; NEED_MIRROR_KEY=0; NEED_TEAM_KEY=0; README_CONTENT=""
+NEED_CREATE_REPO=0; NEED_README=0; NEED_MIRROR_KEY=0; NEED_TEAM_KEY=0; README_CONTENT=""; UPGRADE_KEY_ID=""
+
+if [ -n "$UPGRADE_TITLE" ]; then
+  verify_repo_identity "$MIRROR_REPO" || exit 1
+  upgrade_brain_key "$UPGRADE_TITLE" || exit 1
+  exit 0
+fi
 
 phase1_checks || exit 1
 [ "$DRY_RUN" -eq 1 ] && exit 0
