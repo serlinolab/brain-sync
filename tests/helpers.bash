@@ -206,7 +206,7 @@ install_ruleset_hook() {
 echo call >> "$(git rev-parse --git-dir)/pre-receive-calls"
 protected='(^|/)(CLAUDE\.md|CLAUDE\.local\.md|AGENTS\.md)$|(^|/)\.(claude|agents)(/|$)|^method/|^(audits/latest-weekly\.md|company/stock-status\.md|competitors/README\.md|voice-of-customer/(corpus-profile|phrase-bank-it|phrase-bank-us|support-requests)\.md)$'
 while read -r old new ref; do
-  bad=$(git diff --name-only "$old" "$new" 2>/dev/null | grep -E "$protected" | head -1)
+  bad=$(git diff --name-only "$old" "$new" 2>/dev/null | grep -Ei "$protected" | head -1)
   [ -n "$REFUSE_ALL" ] && bad=${bad:-any-path}
   if [ -n "$bad" ]; then
     echo "error: GH013: Repository rule violations found for $ref." >&2

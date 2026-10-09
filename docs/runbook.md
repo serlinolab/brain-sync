@@ -81,7 +81,14 @@ stay read-only on disk and are never committed by the engine. Two layers keep th
 
 ### The protected paths
 
-A repo-relative path is protected when **any** of these holds (case-sensitive, like the ruleset):
+A repo-relative path is protected when **any** of these holds. **Matching ignores case**: Macs are
+case-insensitive, so `notes/claude.md`, `notes/Agents.md` and `.CLAUDE/skills/x/SKILL.md` load as
+instructions exactly like `CLAUDE.md`, `AGENTS.md` and `.claude/`. GitHub matches these paths
+case-insensitively too (verified 2026-10-09 with a temporary write deploy key: all three were refused
+with `GH013` "File path is restricted" while an unprotected file was accepted), so no case-variant
+patterns are needed in the ruleset and the engine folds case for all four rules below, `method/` and
+the seven export files included. Before this, `company/agents.md` was silently never shared; it is now
+a protected path: kept in `protected-edits`, with the attention line.
 
 - its name is `CLAUDE.md`, `CLAUDE.local.md` or `AGENTS.md`, at any depth;
 - any directory component is `.claude` or `.agents` (the `.agents` symlink to `.claude/skills` is protected as a path itself);

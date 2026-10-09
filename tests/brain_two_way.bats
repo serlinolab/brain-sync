@@ -24,15 +24,20 @@ PROTECTED_PATHS=(AGENTS.md CLAUDE.md a/b/AGENTS.md notes/CLAUDE.local.md .claude
   method/craft/scriptwriting.md audits/latest-weekly.md company/stock-status.md competitors/README.md
   voice-of-customer/corpus-profile.md voice-of-customer/phrase-bank-it.md voice-of-customer/phrase-bank-us.md
   voice-of-customer/support-requests.md)
-OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x.md methods/x.md claude.md
+# MAX-1790: Macs mount case-insensitively, so these load as instructions / hit the same files.
+# GitHub's ruleset folds case too (verified 2026-10-09), so the engine does.
+CASE_VARIANT_PATHS=(claude.md notes/claude.md notes/Agents.md company/agents.md notes/Claude.Local.md
+  .CLAUDE/skills/x/SKILL.md x/.Agents/y.md Method/x.md METHOD/README.md Audits/Latest-Weekly.md
+  Company/Stock-Status.md Voice-Of-Customer/Phrase-Bank-IT.md)
+OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x.md methods/x.md
   company/CLAUDE.md.bak voice-of-customer/phrase-bank-fr.md)
 
 # --- the rule itself -------------------------------------------------------------------------
 
-@test "the protected-path rule refuses the 18 ruleset paths and lets ordinary pages through" {
+@test "the protected-path rule refuses the 18 ruleset paths and their case variants, and lets ordinary pages through" {
   source "$REPO_ROOT/lib/protected_paths.sh"
   local p
-  for p in "${PROTECTED_PATHS[@]}"; do brain_path_protected "$p" || { echo "should be protected: $p"; false; }; done
+  for p in "${PROTECTED_PATHS[@]}" "${CASE_VARIANT_PATHS[@]}"; do brain_path_protected "$p" || { echo "should be protected: $p"; false; }; done
   for p in "${OPEN_PATHS[@]}"; do ! brain_path_protected "$p" || { echo "should be open: $p"; false; }; done
 }
 
@@ -40,20 +45,20 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   source "$REPO_ROOT/lib/protected_paths.sh"
   local r="$BRAIN_ROOT/pathspec-check" p
   git init -q "$r"
-  for p in "${PROTECTED_PATHS[@]}" "${OPEN_PATHS[@]}"; do
+  for p in "${PROTECTED_PATHS[@]}" "${CASE_VARIANT_PATHS[@]}" "${OPEN_PATHS[@]}"; do
     [ "$p" = .agents ] && continue   # the symlink itself is covered by the .agents/y/z.md case below
-    [ "$p" = claude.md ] && continue # the same file as CLAUDE.md on a case-insensitive Mac volume
     mkdir -p "$r/$(dirname "$p")"; echo x > "$r/$p"
   done
   local -a specs=()
   while IFS= read -r p; do specs+=("$p"); done < <(brain_protected_excludes)
   git -C "$r" add -A -- . "${specs[@]}"
   local staged; staged=$(git -C "$r" diff --cached --name-only)
-  for p in "${PROTECTED_PATHS[@]}"; do
+  # -i: on a case-insensitive volume git records a variant under the spelling already on disk
+  for p in "${PROTECTED_PATHS[@]}" "${CASE_VARIANT_PATHS[@]}"; do
     [ "$p" = .agents ] && continue
-    ! grep -qxF "$p" <<<"$staged" || { echo "staged although protected: $p"; false; }
+    ! grep -qixF "$p" <<<"$staged" || { echo "staged although protected: $p"; false; }
   done
-  for p in "${OPEN_PATHS[@]}"; do [ "$p" = claude.md ] || grep -qxF "$p" <<<"$staged" || { echo "not staged although open: $p"; false; }; done
+  for p in "${OPEN_PATHS[@]}"; do grep -qxF "$p" <<<"$staged" || { echo "not staged although open: $p"; false; }; done
 }
 
 # --- two-way ---------------------------------------------------------------------------------
@@ -119,6 +124,20 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   ! grep -qi 'git\|commit\|rebase\|ruleset' "$MARK"
   run bash -c "echo x >> '$MIRROR/CLAUDE.md'" 2>/dev/null; [ "$status" -ne 0 ]    # locked again
   run bash -c "touch '$MIRROR/method/n.md'" 2>/dev/null;   [ "$status" -ne 0 ]
+}
+
+@test "case variants of instruction files are kept aside too, never shared, never silent" {
+  chmod u+w "$MIRROR/.claude" "$MIRROR/.claude/skills"   # someone overriding the lock, as on a Mac
+  mkdir -p "$MIRROR/notes" "$MIRROR/.CLAUDE/skills/x"
+  echo "lower" > "$MIRROR/notes/claude.md"; echo "agents" > "$MIRROR/company/agents.md"
+  echo "skill" > "$MIRROR/.CLAUDE/skills/x/SKILL.md"; echo "open" > "$MIRROR/company/open.md"
+  run_sync_cycle
+  origin show main:company/open.md >/dev/null
+  ! origin ls-tree -r --name-only main | grep -qi 'notes/claude.md\|agents.md\|skills/x' || false
+  [ ! -e "$MIRROR/notes/claude.md" ] && [ ! -e "$MIRROR/company/agents.md" ]
+  [ "$(cat "$STATE"/protected-edits/*/notes/claude.md)" = lower ]
+  [ "$(cat "$STATE"/protected-edits/*/company/agents.md)" = agents ]
+  grep -q "locked page" "$MARK"
 }
 
 @test "the git add exclusion alone keeps a protected edit out of a commit, whatever the restore step did" {
