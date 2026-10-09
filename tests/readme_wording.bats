@@ -123,3 +123,26 @@ load 'helpers'
   run grep -qF 'claude-code#92210' "$REPO_ROOT/docs/runbook.md"
   [ "$status" -eq 0 ]
 }
+
+# MAX-1790: the Brain is editable on a Mac whose key may write. The creator text says what stays
+# locked and where unsent text goes; the runbook keeps the protected list, the ruleset and the upgrade.
+@test "the creator-facing section explains editing the Brain, the locked pages and where kept text goes" {
+  local creator_section
+  creator_section=$(sed -n '1,/^## For Max$/p' "$REPO_ROOT/README.md" | sed '$d')
+  run grep -q '^## Editing the Brain$' <<<"$creator_section"
+  [ "$status" -eq 0 ]
+  local word
+  for word in 'within a few minutes' '**method** folder' 'protected-edits' 'brain-unsent' 'stays read-only'; do
+    run grep -qF -- "$word" <<<"$creator_section"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the runbook documents the protected paths, the ruleset, the key upgrade and the rollback" {
+  local word
+  for word in 'lib/protected_paths.sh' 'brain-protected-paths' 'GH013' '.claude/**/*' 'method/**/*' '--upgrade-brain-key' \
+              'Rollback' 'brain-unsent' 'protected-edits' 'never saved'; do
+    run grep -qF -- "$word" "$REPO_ROOT/docs/runbook.md"
+    [ "$status" -eq 0 ] || { echo "runbook lacks: $word"; false; }
+  done
+}

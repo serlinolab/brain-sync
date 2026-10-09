@@ -4,6 +4,12 @@
 # Max's own is needed, since deploy keys are registered through the GitHub API.
 #
 #   ./provision.sh [--dry-run] "SERLINO-BRAIN-SETUP person=alice machine=alices-mac mirror_key=ssh-ed25519 AAAA... brain-mirror-alices-mac team_key=ssh-ed25519 AAAA... brain-team-alice"
+#
+# MAX-1790: the Brain key is registered WITH write access (the Mac edits the Brain directly; the
+# GitHub push ruleset keeps protected paths out). A Mac provisioned earlier holds a read-only key:
+# re-running this with its pasted line upgrades it, or, with nothing from that Mac, by title:
+#
+#   ./provision.sh [--dry-run] --upgrade-brain-key "brain-mirror alice alices-mac"
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GH="${GH:-gh}"
@@ -14,16 +20,121 @@ TEAM_README_TEMPLATE="$SCRIPT_DIR/templates/team-repo-README.md"
 
 DRY_RUN=0
 LINE=""
-for arg in "$@"; do
-  case "$arg" in
+UPGRADE_TITLE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --dry-run) DRY_RUN=1 ;;
-    *) LINE="$arg" ;;
+    --upgrade-brain-key) shift; UPGRADE_TITLE="${1:-}" ;;
+    *) LINE="$1" ;;
   esac
+  shift
 done
-[ -n "$LINE" ] || { echo "Usage: provision.sh [--dry-run] '<pasted SERLINO-BRAIN-SETUP line>'" >&2; exit 1; }
+if [ -z "$LINE" ] && [ -z "$UPGRADE_TITLE" ]; then
+  echo "Usage: provision.sh [--dry-run] '<pasted SERLINO-BRAIN-SETUP line>' | --upgrade-brain-key '<existing key title>'" >&2
+  exit 1
+fi
 
 refuse(){ echo "Refusing: $*" >&2; exit 1; }
 
+# MAX-1790: GitHub cannot flip read_only on an existing deploy key, so the upgrade deletes the
+# read-only key and registers the SAME public key again under the SAME title with write access.
+# The only read_only change this script ever makes, and only for the Brain repo.
+#
+# The delete is the dangerous half: a failure after it leaves the Mac with NO key. So (1) the org,
+# repo, title and PUBLIC key are saved to $RECOVERY_DIR before anything is deleted (a public key is
+# not a secret), and the upgrade refuses if that cannot be written; (2) the write registration is
+# retried once; (3) if it still fails, the old read-only key is registered again so the Mac keeps
+# working; (4) if even that fails, the exact way back is printed. Re-running
+# `--upgrade-brain-key <title>` reads the saved material, so the title alone is enough to finish.
+# A DELETE that answers with an error may still have been applied, so the saved file is never
+# dropped on that answer: the key list says what happened. The file is used only for the org, repo
+# and title it was written for, and is dropped as soon as a writable key under that title exists
+# on GitHub by any path (recovery_forget, below) - a key revoked later must not come back from it.
+RECOVERY_DIR="${BRAIN_PROVISION_STATE:-$HOME/.serlino-brain-provision}"
+recovery_file(){ printf '%s/upgrade-%s.tsv' "$RECOVERY_DIR" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+recovery_forget(){ [ "$DRY_RUN" -eq 1 ] || rm -f "$(recovery_file "$1")"; }
+
+# Registers $2 (title) / $3 (key) writable on the Brain repo; one retry. Returns 0 on success.
+register_brain_key_writable(){
+  register_key_mutate "$MIRROR_REPO" "$1" "$2" false && return 0
+  echo "registering with write access failed; trying once more" >&2
+  register_key_mutate "$MIRROR_REPO" "$1" "$2" false
+}
+
+# The key is gone from GitHub and is being brought back (after the delete, or from saved material).
+# $1 title, $2 public key, $3 recovery file. Success removes the file.
+brain_key_reregister(){
+  if register_brain_key_writable "$1" "$2"; then rm -f "$3"; return 0; fi
+  echo "write registration failed twice; registering the old read-only key again so this Mac keeps working" >&2
+  if register_key_mutate "$MIRROR_REPO" "$1" "$2" true; then
+    echo "The Mac's read-only key was put back; it still reads the Brain but cannot write yet." >&2
+    echo "Run this again later to finish the upgrade (the saved key is in $3):" >&2
+    echo "  ./provision.sh --upgrade-brain-key '$1'" >&2
+    return 1
+  fi
+  echo "ERROR: '$1' has NO key on $MIRROR_REPO now - this Mac cannot read the Brain until it is registered." >&2
+  echo "Run this again when GitHub answers (the saved key is in $3):" >&2
+  echo "  ./provision.sh --upgrade-brain-key '$1'" >&2
+  echo "Or register it by hand (public key, safe to paste):" >&2
+  echo "  gh api repos/$BRAIN_ORG/$MIRROR_REPO/keys -f title='$1' -f key='$2' -F read_only=false" >&2
+  return 1
+}
+
+# $1 key id, $2 title, $3 public key. A DELETE error is ambiguous (the server may have deleted the key
+# and lost the answer), so the key list decides: title or key still there -> nothing was deleted,
+# report and keep the saved key; both gone -> carry on to the registration. A list that fails is
+# unknown, never "gone": the saved key stays and the printed way back works either way.
+upgrade_key_mutate(){
+  local rf rows t k ro id gone=1; rf=$(recovery_file "$2")
+  mkdir -p "$RECOVERY_DIR" && printf '%s\t%s\t%s\t%s\n' "$BRAIN_ORG" "$MIRROR_REPO" "$2" "$3" > "$rf" \
+    || { echo "refusing: could not save the recovery material in $RECOVERY_DIR; nothing was deleted" >&2; return 1; }
+  echo "deleting read-only deploy key $1 ('$2') on $MIRROR_REPO, registering the same key again with write access (key saved in $rf first)"
+  if ! "$GH" api -X DELETE "repos/$BRAIN_ORG/$MIRROR_REPO/keys/$1" >/dev/null; then
+    echo "the delete answered with an error; asking GitHub whether it was applied anyway" >&2
+    if ! rows=$(gh_keys_rows "$MIRROR_REPO"); then
+      echo "could not tell. The saved key is kept in $rf; run './provision.sh --upgrade-brain-key '$2'' to finish or check." >&2
+      return 1
+    fi
+    while IFS=$'\t' read -r t k ro id; do
+      [ "$t" = "$2" ] || [ "$(awk '{print $1, $2}' <<<"$k")" = "$(awk '{print $1, $2}' <<<"$3")" ] && gone=0
+    done <<<"$rows"
+    if [ "$gone" -eq 0 ]; then
+      echo "the key is still registered; nothing was deleted. The saved key is kept in $rf." >&2
+      return 1
+    fi
+  fi
+  brain_key_reregister "$2" "$3" "$rf"
+}
+upgrade_brain_key(){
+  local rows t k ro id rf so sr st saved_key
+  rows=$(gh_keys_rows "$MIRROR_REPO") || return 1
+  while IFS=$'\t' read -r t k ro id; do
+    [ "$t" = "$1" ] || continue
+    if [ "$ro" != true ]; then echo "already writable: '$1' on $MIRROR_REPO"; recovery_forget "$1"; return 0; fi
+    [ -n "$id" ] || { echo "refusing: no id for '$1' on $MIRROR_REPO" >&2; return 1; }
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "would delete deploy key $id ('$1') on $MIRROR_REPO and register the same key again, read_only=false"
+      return 0
+    fi
+    upgrade_key_mutate "$id" "$1" "$k"
+    return
+  done <<<"$rows"
+  # Not on GitHub. An earlier upgrade that failed after its delete left the key in the saved material.
+  rf=$(recovery_file "$1")
+  if [ -s "$rf" ]; then
+    IFS=$'\t' read -r so sr st saved_key < "$rf"
+    if [ "$so" = "$BRAIN_ORG" ] && [ "$sr" = "$MIRROR_REPO" ] && [ "$st" = "$1" ] && [[ "$saved_key" == ssh-ed25519\ * ]]; then
+      if [ "$DRY_RUN" -eq 1 ]; then echo "would register the saved key for '$1' on $MIRROR_REPO with write access (from $rf)"; return 0; fi
+      echo "'$1' has no key on $MIRROR_REPO; finishing the interrupted upgrade from $rf"
+      brain_key_reregister "$1" "$saved_key" "$rf"
+      return
+    fi
+  fi
+  echo "refusing: no deploy key titled '$1' on $MIRROR_REPO" >&2
+  return 1
+}
+
+if [ -z "$UPGRADE_TITLE" ]; then
 person=$(printf '%s' "$LINE" | sed -nE 's/.*person=([^ ]*) machine=.*/\1/p')
 machine=$(printf '%s' "$LINE" | sed -nE 's/.*machine=([^ ]*) mirror_key=.*/\1/p')
 mirror_key=$(printf '%s' "$LINE" | sed -nE 's/.*mirror_key=(.*) team_key=.*/\1/p')
@@ -33,6 +144,7 @@ team_key=$(printf '%s' "$LINE" | sed -nE 's/.*team_key=(.*)$/\1/p')
 [[ "$machine" =~ ^[a-zA-Z0-9._-]+$ ]] || refuse "not a valid machine name: '$machine'"
 [[ "$mirror_key" == ssh-ed25519\ * ]] || refuse "mirror_key does not look like an ssh-ed25519 public key"
 [[ "$team_key" == ssh-ed25519\ * ]] || refuse "team_key does not look like an ssh-ed25519 public key"
+fi
 
 # AC-1: re-running is safe. Same title + same key -> success, nothing changes. Same title
 # with a different key, a different read_only flag under the same title/key, or the same key
@@ -53,25 +165,39 @@ team_key=$(printf '%s' "$LINE" | sed -nE 's/.*team_key=(.*)$/\1/p')
 # MAX-1515 fix 1: read-only. Never mutates. Sets $NEED_REGISTER to 0 (already registered
 # correctly - phase 2 has nothing to do) or 1 (phase 2 must register it). The GET this makes is
 # the ONLY deploy-keys lookup for this repo across the whole run - phase 2 must not repeat it.
+#
+# MAX-1790: $5 = 1 allows ONE change of read_only - an existing read-only key on this repo,
+# same title and same key, wanted writable - and reports it as NEED_REGISTER=2 with the key's id
+# in $UPGRADE_KEY_ID. Every other mismatch still refuses, on both repos.
+gh_keys_rows(){
+  "$GH" api --paginate "repos/$BRAIN_ORG/$1/keys" --jq '.[] | [.title,.key,.read_only,.id] | @tsv' 2>/dev/null && return 0
+  echo "refusing: could not look up existing deploy keys on $1 (the gh lookup failed - treated as unknown, never as absent)" >&2
+  return 1
+}
+
 register_key_check(){
-  local repo="$1" title="$2" key="$3" want_ro="$4"
+  local repo="$1" title="$2" key="$3" want_ro="$4" allow_upgrade="${5:-0}"
   local key_material; key_material=$(awk '{print $1, $2}' <<<"$key")
   NEED_REGISTER=1
 
   local rows
-  if ! rows=$("$GH" api --paginate "repos/$BRAIN_ORG/$repo/keys" --jq '.[] | [.title,.key,.read_only] | @tsv' 2>/dev/null); then
-    echo "refusing: could not look up existing deploy keys on $repo (the gh lookup failed - treated as unknown, never as absent)" >&2
-    return 1
-  fi
+  rows=$(gh_keys_rows "$repo") || return 1
 
-  local t k ro material
-  while IFS=$'\t' read -r t k ro; do
+  local t k ro id material
+  while IFS=$'\t' read -r t k ro id; do
     [ -n "$t" ] || continue
     material=$(awk '{print $1, $2}' <<<"$k")
     if [ "$t" = "$title" ]; then
+      [ "$repo" = "$MIRROR_REPO" ] && recovery_forget "$title"   # a key under this title exists: a saved one is stale
       if [ "$material" != "$key_material" ]; then
         echo "refusing: a deploy key titled '$title' already exists on $repo with a different key" >&2
         return 1
+      fi
+      if [ "$allow_upgrade" = 1 ] && [ "$ro" = true ] && [ "$want_ro" = false ]; then
+        [ -n "$id" ] || { echo "refusing: no id for '$title' on $repo, cannot upgrade it" >&2; return 1; }
+        echo "will upgrade deploy key '$title' on $repo from read-only to read_only=false (delete it, register the same key again)"
+        NEED_REGISTER=2; UPGRADE_KEY_ID="$id"
+        return 0
       fi
       if [ "$ro" != "$want_ro" ]; then
         echo "refusing: '$title' on $repo is registered with read_only=$ro, expected read_only=$want_ro - refusing to change it" >&2
@@ -95,7 +221,10 @@ register_key_check(){
 register_key_mutate(){
   local repo="$1" title="$2" key="$3" want_ro="$4"
   echo "registering deploy key '$title' on $repo (read_only=$want_ro)"
-  "$GH" api "repos/$BRAIN_ORG/$repo/keys" -f title="$title" -f key="$key" -F "read_only=$want_ro" >/dev/null
+  "$GH" api "repos/$BRAIN_ORG/$repo/keys" -f title="$title" -f key="$key" -F "read_only=$want_ro" >/dev/null || return 1
+  # a writable Brain key now exists under this title, by whatever path: a saved one can only be stale
+  [ "$repo" = "$MIRROR_REPO" ] && [ "$want_ro" = false ] && recovery_forget "$title"
+  return 0
 }
 
 # AC-1a: only a DEFINITE 404 means "absent" - any other lookup failure (network, 5xx, auth)
@@ -234,7 +363,7 @@ phase1_checks(){
     *) return 1 ;;   # verify_repo_identity already printed the refusal
   esac
 
-  register_key_check "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || return 1
+  register_key_check "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" false 1 || return 1
   NEED_MIRROR_KEY="$NEED_REGISTER"
 
   if [ "$NEED_CREATE_REPO" -eq 1 ]; then
@@ -250,12 +379,21 @@ phase1_checks(){
 # guarded here - single operator, seconds apart, running this by hand once per new person/Mac.
 phase2_mutate(){
   team_repo_mutate || return 1
-  [ "$NEED_MIRROR_KEY" -eq 1 ] && { register_key_mutate "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" true || return 1; }
+  # An upgrade deletes first (GitHub refuses the same key twice); upgrade_key_mutate saves the key,
+  # retries, and falls back to the read-only key, so a failure after the delete is recoverable.
+  [ "$NEED_MIRROR_KEY" -eq 2 ] && { upgrade_key_mutate "$UPGRADE_KEY_ID" "brain-mirror $person $machine" "$mirror_key" || return 1; }
+  [ "$NEED_MIRROR_KEY" -eq 1 ] && { register_key_mutate "$MIRROR_REPO" "brain-mirror $person $machine" "$mirror_key" false || return 1; }
   [ "$NEED_TEAM_KEY" -eq 1 ] && { register_key_mutate "$TEAM_REPO" "brain-team $person $machine" "$team_key" false || return 1; }
   return 0
 }
 
-NEED_CREATE_REPO=0; NEED_README=0; NEED_MIRROR_KEY=0; NEED_TEAM_KEY=0; README_CONTENT=""
+NEED_CREATE_REPO=0; NEED_README=0; NEED_MIRROR_KEY=0; NEED_TEAM_KEY=0; README_CONTENT=""; UPGRADE_KEY_ID=""
+
+if [ -n "$UPGRADE_TITLE" ]; then
+  verify_repo_identity "$MIRROR_REPO" || exit 1
+  upgrade_brain_key "$UPGRADE_TITLE" || exit 1
+  exit 0
+fi
 
 phase1_checks || exit 1
 [ "$DRY_RUN" -eq 1 ] && exit 0

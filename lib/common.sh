@@ -21,7 +21,7 @@ export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeou
 ROOT="${BRAIN_ROOT:-$HOME/Serlinolab}"
 STATE="$ROOT/.state"
 TEAM="$ROOT/team"                 # MAX-1515: two-way, everyone writes
-MIRROR="$ROOT/Serlinolab_Brain"   # MAX-1515 (amended): beside team/, not nested inside it, read-only
+MIRROR="$ROOT/Serlinolab_Brain"   # MAX-1515 (amended): beside team/, not nested inside it; read-only until this Mac's key may write (MAX-1790)
 PERSONAL="$ROOT/personal"         # MAX-1515: plain folders, no git, engine never touches this
 LOG="$STATE/sync.log"
 MARK="$ROOT/SOMETHING NEEDS YOUR ATTENTION.txt"
@@ -45,6 +45,19 @@ CONFLICTS="$STATE/conflicts"      # AC-6: incoming copy of each conflicting file
 # wedging silently. Cleared by update_attention_marker itself once the stash is actually gone
 # (re-derived from real state, AC-7 - never trusted as a standing flag on its own).
 AUTOSTASH_CONFLICT_STATE="$STATE/autostash_conflict"
+# MAX-1790: the Brain, once this Mac's key can write to it, runs through the same pipeline as
+# team/ - with its own state files, so a parked Brain conflict never blocks team/ and vice versa.
+BRAIN_WRITABLE="$STATE/brain-writable"               # last probe said this Mac may push to the Brain
+BRAIN_CONFLICT_STATE="$STATE/brain_conflict_attempts"
+BRAIN_CONFLICT_PARK_SHAS="$STATE/brain_conflict_park_shas"
+BRAIN_AUTOSTASH_STATE="$STATE/brain_autostash_conflict"
+BRAIN_PUSH_PARKED="$STATE/brain_push_parked"          # "<origin sha> <local sha>" of a push GitHub refused
+BRAIN_CONFLICTS="$STATE/brain-conflicts"
+BRAIN_PROTECTED_EDITS="$STATE/protected-edits"        # text a person wrote into a protected Brain file
+BRAIN_UNSENT="$STATE/brain-unsent"                    # Brain work saved when writing was switched off again
+BRAIN_REPLACED="$STATE/brain-replaced"                # an ignored local file a colleague's file then replaced
+BRAIN_PRESERVE_FAILED="$STATE/brain_preserve_failed"  # a copy of a person's Brain work failed: nothing was reset
+BRAIN_NOTICE_MINUTES="${BRAIN_NOTICE_MINUTES:-1440}"  # how long the attention file mentions the two above
 QUARANTINE="$STATE/quarantine"    # AC-4: locally-created instruction files are moved here, never deleted
 ONLINE_CHECK_REMOTE="${ONLINE_CHECK_REMOTE:-git@brain-mirror:serlinolab/Serlinolab-Brain.git}"
 # MAX-1515 fix 4b: what setup.sh ever adopts or creates team/ and the mirror against - the

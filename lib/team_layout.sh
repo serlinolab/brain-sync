@@ -86,7 +86,8 @@ write_team_exclude(){
   local team="$1"
   mkdir -p "$team/.git/info" || return 1
   local p
-  { for p in "${TEAM_OS_JUNK_FILE_PATTERNS[@]}" "${TEAM_OS_JUNK_DIR_NAMES[@]}"; do printf '%s\n' "$p"; done; } > "$team/.git/info/exclude"
+  # $2...: extra local-only lines (the Brain adds its generated signpost - MAX-1790).
+  { for p in "${TEAM_OS_JUNK_FILE_PATTERNS[@]}" "${TEAM_OS_JUNK_DIR_NAMES[@]}" "${@:2}"; do printf '%s\n' "$p"; done; } > "$team/.git/info/exclude"
 }
 
 # Pathspecs for `git rm`/`git log`/`git diff` (porcelain plumbing, not the exclude file's

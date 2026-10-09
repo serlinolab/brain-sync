@@ -91,6 +91,14 @@ if [ "$commit_rc" -eq 1 ]; then
   update_attention_marker
   exit 1
 fi
+# MAX-1790: a Brain this Mac may write to is committed locally too (lib/brain_write.sh) - after
+# team/, and never fatal to it. Local only: whether the Brain is writable is last cycle's answer.
+brain_rc=0
+commit_brain || brain_rc=$?
+[ "$brain_rc" -eq 0 ] || log "Brain local commit failed; continuing"
+# 3: work could not be copied aside. The cycle ends non-zero and sync_mirror (lib/sync.sh) leaves the Brain
+# alone: no fetch, reset, rebase or push can run while the person's text has no copy. team/ is unaffected.
+brain_exit=0; brain_hold=0; [ "$brain_rc" -eq 3 ] && { brain_exit=1; brain_hold=1; }
 stale_check
 # Codex review of aea244e, blocking finding 1: the mirror and team/ each have their own remote
 # and their own deploy key, so each is probed independently below (online()/team_online(),
@@ -103,7 +111,7 @@ team_online || team_up=0
 if [ "$mirror_up" -eq 0 ] && [ "$team_up" -eq 0 ]; then
   log "offline; local work is committed, nothing more to do this cycle"
   update_attention_marker
-  exit 0
+  exit "$brain_exit"
 fi
 cycle_rc=0
 if [ "$mirror_up" -eq 1 ]; then
@@ -117,6 +125,7 @@ if [ "$team_up" -eq 1 ]; then
 else
   log "team unreachable this cycle (network or key); skipping team sync"
 fi
+[ "$brain_exit" -eq 0 ] || cycle_rc=1
 what_changed
 update_attention_marker
 # For remote checks (lib/heartbeat.sh); only when team/'s remote answered this cycle.

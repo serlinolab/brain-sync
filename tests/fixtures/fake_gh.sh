@@ -21,6 +21,18 @@
 #                                        makes ONE such GET per repo - this lets a test fail the
 #                                        second one and prove a regression would be caught.
 #
+#   FAKE_GH_FAIL_KEY_POSTS=<n>        - the first <n> key registrations (POST repos/*/*/keys) of the run
+#                                        exit 1 with "HTTP 500" and register nothing (counted in
+#                                        $STATE/key_post_count). MAX-1790: lets a test fail the
+#                                        re-registration that follows an upgrade's DELETE.
+#
+#   FAKE_GH_DELETE_FAIL=before|after   - a key DELETE exits 1 with "HTTP 500". "before" removes nothing;
+#                                        "after" removes the key first, like a server that applied the
+#                                        delete and lost the response (MAX-1790: the ambiguous case).
+#
+#   `api -X DELETE repos/ORG/REPO/keys/ID` removes the ID-th row of the repo's keys file; a keys
+#   listing's 4th column is that row number, which is the id.
+#
 # A repo's marker file (`$STATE/repos/ORG__REPO`) is up to two lines: line 1 is privacy
 # ("true"/"false", what `repo create --private` writes - defaults to "true" if the line is
 # empty), line 2 is an optional full_name override (defaults to "ORG/REPO" - the exact name
@@ -93,7 +105,7 @@ case "$cmd" in
           local_rows() { if [ "$paginate" = 1 ]; then cat "$keyfile"; else head -n "$PAGE_SIZE" "$keyfile"; fi; }
           if [ -n "$jqexpr" ]; then
             case "$jqexpr" in
-              *'@tsv'*) local_rows ;;
+              *'@tsv'*) local_rows | awk '{print $0 "\t" NR}' ;;   # a key's id is its line number (stable within one run)
               *'select(.title=='*)
                 want=$(printf '%s' "$jqexpr" | sed -nE 's/.*select\(\.title=="([^"]*)"\).*/\1/p')
                 local_rows | awk -F'\t' -v t="$want" '$1==t{print $2}'
@@ -108,6 +120,10 @@ case "$cmd" in
           fi
           exit 0
         else
+          if [ -n "${FAKE_GH_FAIL_KEY_POSTS:-}" ]; then
+            n=$(( $(cat "$STATE/key_post_count" 2>/dev/null || echo 0) + 1 )); printf '%s' "$n" > "$STATE/key_post_count"
+            [ "$n" -le "$FAKE_GH_FAIL_KEY_POSTS" ] && { echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; }
+          fi
           title="" key="" ro="false"
           for f in "${fields[@]}"; do
             case "$f" in
@@ -119,6 +135,16 @@ case "$cmd" in
           printf '%s\t%s\t%s\n' "$title" "$key" "$ro" >> "$keyfile"
           exit 0
         fi
+        ;;
+      repos/*/*/keys/*)
+        # DELETE of one key by id (MAX-1790: a deploy key's read_only cannot be flipped, only re-registered)
+        org=$(echo "$path" | cut -d/ -f2); repo=$(echo "$path" | cut -d/ -f3); id=$(echo "$path" | cut -d/ -f5)
+        keyfile="$STATE/repos/${org}__${repo}.keys"
+        [ "$method" = DELETE ] && [ -s "$keyfile" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+        [ "${FAKE_GH_DELETE_FAIL:-}" = before ] && { echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; }
+        awk -v n="$id" 'NR!=n' "$keyfile" > "$keyfile.tmp" && mv "$keyfile.tmp" "$keyfile"
+        [ "${FAKE_GH_DELETE_FAIL:-}" = after ] && { echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; }
+        exit 0
         ;;
       repos/*/*/contents/*)
         org=$(echo "$path" | cut -d/ -f2); repo=$(echo "$path" | cut -d/ -f3)
