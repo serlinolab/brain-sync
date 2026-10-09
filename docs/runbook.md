@@ -161,6 +161,14 @@ read-only key; GitHub cannot flip `read_only` on a key, so the script deletes it
 `brain-team` key, or any other change of a key's `read_only`, is still refused. The Mac switches to
 editable on its own the next cycle.
 
+**If the upgrade fails halfway** (the delete worked, the new registration did not), the Mac has no key
+on GitHub until it is registered again. The script saves the title and the **public** key to
+`~/.serlino-brain-provision/` (`$BRAIN_PROVISION_STATE`) *before* deleting, and refuses to delete if
+that cannot be written. After a failed write registration it retries once, then registers the old
+read-only key again so the Mac keeps reading, and finally prints the exact `gh api` command. Re-running
+`./provision.sh --upgrade-brain-key "<title>"` finds the saved key and finishes the upgrade; the title
+alone is enough. The saved file is removed when the key is writable.
+
 ### Rollback
 
 Re-register the Mac's Brain key as read-only (delete it and add it again with `read_only=true`, or

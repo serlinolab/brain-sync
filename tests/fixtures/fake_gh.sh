@@ -21,6 +21,11 @@
 #                                        makes ONE such GET per repo - this lets a test fail the
 #                                        second one and prove a regression would be caught.
 #
+#   FAKE_GH_FAIL_KEY_POSTS=<n>        - the first <n> key registrations (POST repos/*/*/keys) of the run
+#                                        exit 1 with "HTTP 500" and register nothing (counted in
+#                                        $STATE/key_post_count). MAX-1790: lets a test fail the
+#                                        re-registration that follows an upgrade's DELETE.
+#
 #   `api -X DELETE repos/ORG/REPO/keys/ID` removes the ID-th row of the repo's keys file; a keys
 #   listing's 4th column is that row number, which is the id.
 #
@@ -111,6 +116,10 @@ case "$cmd" in
           fi
           exit 0
         else
+          if [ -n "${FAKE_GH_FAIL_KEY_POSTS:-}" ]; then
+            n=$(( $(cat "$STATE/key_post_count" 2>/dev/null || echo 0) + 1 )); printf '%s' "$n" > "$STATE/key_post_count"
+            [ "$n" -le "$FAKE_GH_FAIL_KEY_POSTS" ] && { echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; }
+          fi
           title="" key="" ro="false"
           for f in "${fields[@]}"; do
             case "$f" in

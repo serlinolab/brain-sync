@@ -5,6 +5,7 @@ load 'helpers'
 setup() {
   BRAIN_ROOT="$(mktemp -d)"; export BRAIN_ROOT
   FAKE_GH_STATE="$(mktemp -d)"; export FAKE_GH_STATE
+  BRAIN_PROVISION_STATE="$BRAIN_ROOT/provision-state"; export BRAIN_PROVISION_STATE   # never the real home
   GH="$REPO_ROOT/tests/fixtures/fake_gh.sh"; export GH
   BRAIN_ORG="test-org"; export BRAIN_ORG
   LINE="SERLINO-BRAIN-SETUP person=alice machine=alices-mac mirror_key=ssh-ed25519 AAAAmirror brain-mirror-alices-mac team_key=ssh-ed25519 AAAAteam brain-team-alice"
@@ -392,4 +393,60 @@ seed_readonly_brain_key() {
   [[ "$output" == *"expected read_only=false"* ]] || false
   [ "$(key_line_count "$BRAIN_ORG/brain-team")" = 1 ]
   [ ! -s "$(BRAIN_KEYS)" ]                              # phase 1 failed: no Brain key was registered either
+}
+
+# --- MAX-1790 review: an upgrade that fails halfway must leave a way back ---------------------------------
+
+@test "a failed re-registration after the delete is retried once, and the Mac is never left with no key" {
+  seed_readonly_brain_key
+  FAKE_GH_FAIL_KEY_POSTS=1 run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror alice alices-mac"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"trying once more"* ]] || false
+  awk -F'\t' '$1=="brain-mirror alice alices-mac" && $2 ~ /^ssh-ed25519 AAAAmirror/ && $3=="false"{f=1} END{exit !f}' "$(BRAIN_KEYS)"
+  [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 2 ]
+  [ -z "$(ls -A "$BRAIN_PROVISION_STATE" 2>/dev/null)" ]            # finished: nothing left to recover
+}
+
+@test "when both write registrations fail the read-only key is put back, and the recovery material is kept" {
+  seed_readonly_brain_key
+  FAKE_GH_FAIL_KEY_POSTS=2 run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror alice alices-mac"
+  [ "$status" -ne 0 ]
+  awk -F'\t' '$1=="brain-mirror alice alices-mac" && $2 ~ /^ssh-ed25519 AAAAmirror/ && $3=="true"{f=1} END{exit !f}' "$(BRAIN_KEYS)"   # back, read-only
+  [[ "$output" == *"read-only key was put back"* ]] || false
+  [[ "$output" == *"--upgrade-brain-key"*"brain-mirror alice alices-mac"* ]] || false
+  grep -qF "ssh-ed25519 AAAAmirror" "$BRAIN_PROVISION_STATE"/*
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror alice alices-mac"   # a plain re-run finishes it
+  [ "$status" -eq 0 ]
+  awk -F'\t' '$1=="brain-mirror alice alices-mac" && $3=="false"{f=1} END{exit !f}' "$(BRAIN_KEYS)"
+  [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 2 ]
+  [ -z "$(ls -A "$BRAIN_PROVISION_STATE" 2>/dev/null)" ]
+}
+
+@test "when every registration fails after the delete, the exact way back is printed and a re-run restores the key" {
+  seed_readonly_brain_key
+  FAKE_GH_FAIL_KEY_POSTS=3 run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror alice alices-mac"
+  [ "$status" -ne 0 ]
+  ! grep -q "brain-mirror alice alices-mac" "$(BRAIN_KEYS)" || false                          # the Mac has no key on GitHub now
+  [[ "$output" == *"has NO key"* ]] || false
+  [[ "$output" == *"ssh-ed25519 AAAAmirror"* ]] || false                                      # the public key is in the output
+  [[ "$output" == *"provision.sh --upgrade-brain-key 'brain-mirror alice alices-mac'"* ]] || false
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror alice alices-mac"   # title alone is enough now
+  [ "$status" -eq 0 ]
+  awk -F'\t' '$1=="brain-mirror alice alices-mac" && $2 ~ /^ssh-ed25519 AAAAmirror/ && $3=="false"{f=1} END{exit !f}' "$(BRAIN_KEYS)"
+  grep -qF $'brain-mirror bob bobs-mac\tssh-ed25519 AAAAother brain-mirror-bobs-mac\ttrue' "$(BRAIN_KEYS)"
+}
+
+@test "the recovery material is written BEFORE the delete: if it cannot be written, nothing is deleted" {
+  seed_readonly_brain_key
+  local before; before=$(cat "$(BRAIN_KEYS)")
+  echo "in the way" > "$BRAIN_PROVISION_STATE"
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror alice alices-mac"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$(BRAIN_KEYS)")" = "$before" ]
+}
+
+@test "a title that is neither on GitHub nor in the saved material is still refused" {
+  seed_readonly_brain_key
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror nobody nowhere"
+  [ "$status" -ne 0 ]; [[ "$output" == *"no deploy key titled"* ]] || false
 }
