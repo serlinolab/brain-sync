@@ -260,7 +260,9 @@ _sync_brain_two_way(){
   brain_preserve_ignored || return 1   # before anything below can replace a file
   git -C "$MIRROR" config core.hooksPath "$MIRROR/.git/hooks"
   install_team_hooks "$MIRROR" "$STATE/engine/lib" || log "could not install the secret-scan hooks in the Brain"
-  _sync_after_fetch "$MIRROR" brain "$BRAIN_CONFLICT_STATE" "$BRAIN_CONFLICT_PARK_SHAS" "$BRAIN_AUTOSTASH_STATE" brain_push_hook || rc=$?
+  # Label "mirror", not "brain": brain-app's SyncStatus reads "mirror at <sha>" as the mirror step,
+  # and an unknown line leaves every writable Mac yellow (2026-10-09). Keep in step with brain-app.
+  _sync_after_fetch "$MIRROR" mirror "$BRAIN_CONFLICT_STATE" "$BRAIN_CONFLICT_PARK_SHAS" "$BRAIN_AUTOSTASH_STATE" brain_push_hook || rc=$?
   company_readme writable
   brain_lock_protected
   chmod a-w "$MIRROR/$BRAIN_SIGNPOST" 2>/dev/null
