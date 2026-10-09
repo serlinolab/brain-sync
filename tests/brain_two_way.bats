@@ -247,6 +247,16 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   origin show main:company/z.md | grep -q hi
 }
 
+@test "the write probe asks git for its untranslated messages, whatever language this Mac speaks" {
+  local real; real=$(command -v git)
+  mkdir -p "$BRAIN_ROOT/shim"
+  printf '#!/bin/bash\ncase " $* " in *" --dry-run "*) echo "${LC_ALL:-unset}" >> "%s/probe-locale";; esac\nexec "%s" "$@"\n' "$BRAIN_ROOT" "$real" > "$BRAIN_ROOT/shim/git"
+  chmod +x "$BRAIN_ROOT/shim/git"
+  PATH="$BRAIN_ROOT/shim:$PATH" LC_ALL=it_IT.UTF-8 run_sync_cycle
+  [ -s "$BRAIN_ROOT/probe-locale" ]
+  ! grep -qv '^C$' "$BRAIN_ROOT/probe-locale" || false
+}
+
 @test "a probe that cannot tell keeps the last mode instead of resetting a writable Mac" {
   echo "work" > "$MIRROR/company/w.md"
   printf '#!/bin/bash\necho "ssh: connect to host github.com port 22: Operation timed out" >&2\nexit 255\n' > "$BRAIN_ROOT/rp-unknown.sh"
@@ -374,10 +384,16 @@ nothing_kept() { [ ! -d "$STATE/$1" ] || [ -z "$(ls -A "$STATE/$1")" ]; }
   grep -q "huge.bin" "$MARK"
 }
 
-@test "a big file that is already in the Brain does not raise a false alarm" {
-  rm -f "$STATE/brain_oversized_rejects"
-  run_sync_cycle
-  [ ! -f "$MARK" ]
+@test "a big file a colleague already put in the Brain does not raise a false alarm, nor hide real notices" {
+  local o; o=$(mktemp -d); git clone -q "$BRAIN_ROOT/origin-mirror.git" "$o"
+  dd if=/dev/zero of="$o/company/colleague-huge.bin" bs=1048576 count=11 2>/dev/null
+  git -C "$o" add -A; git_commit "$o" "colleague big file"; git -C "$o" push -q origin main; rm -rf "$o"
+  printf 'key=AKIAABCDEFGHIJKLMNOP\n' > "$MIRROR/company/oops.md"
+  run_sync_cycle; run_sync_cycle
+  [ -f "$MIRROR/company/colleague-huge.bin" ]
+  [ ! -s "$STATE/brain_oversized_rejects" ]
+  ! grep -q "too big" "$MARK" || false
+  grep -q "password or access key" "$MARK"                 # the notice that was hidden before
 }
 
 @test "OS junk is never committed from the Brain, and junk already in an unpushed commit is dropped" {
@@ -449,9 +465,13 @@ nothing_kept() { [ ! -d "$STATE/$1" ] || [ -z "$(ls -A "$STATE/$1")" ]; }
 
 @test "with no network the Brain edit is still committed locally, and goes out when it returns" {
   echo "written offline" > "$MIRROR/company/offline.md"
+  edit_protected CLAUDE.md "offline rule"
   mv "$BRAIN_ROOT/origin-mirror.git" "$BRAIN_ROOT/origin-mirror.git.moved"
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/no-such-remote" run_sync_cycle
   [ "$(git -C "$MIRROR" rev-list --count origin/main..HEAD)" = 1 ]
+  [ "$(git -C "$MIRROR" show --name-only --format= HEAD)" = "company/offline.md" ]   # the protected edit did not go in
+  [ "$(cat "$STATE"/protected-edits/*/CLAUDE.md)" = "offline rule" ]
+  run bash -c "echo x >> '$MIRROR/CLAUDE.md'" 2>/dev/null; [ "$status" -ne 0 ]      # and the lock is back, offline too
   mv "$BRAIN_ROOT/origin-mirror.git.moved" "$BRAIN_ROOT/origin-mirror.git"
   run_sync_cycle
   origin show main:company/offline.md | grep -q offline

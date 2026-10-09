@@ -16,9 +16,13 @@ BRAIN_SIGNPOST="READ ME FIRST.txt"
 # receive-pack, which is where GitHub refuses a read-only deploy key; it sends nothing. A
 # "rejected" push (origin moved since the fetch a moment ago) got that far, so the key can write.
 # Needs a fresh origin/main - the caller has just fetched.
+# LC_ALL=C: the "rejected" / "fetch first" / "non-fast-forward" words are printed by the LOCAL git,
+# which translates them (this Mac's prints Italian). The rest it matches is server text ("marked as
+# read only", GH013 in brain_push_hook) or ssh's, which are never translated. Those two are the only
+# places the engine reads a git message; everything else uses exit codes or porcelain/-z output.
 brain_probe_push(){
   local out
-  out=$(git -C "$MIRROR" push --dry-run --quiet origin refs/remotes/origin/main:refs/heads/main 2>&1) && return 0
+  out=$(LC_ALL=C git -C "$MIRROR" push --dry-run --quiet origin refs/remotes/origin/main:refs/heads/main 2>&1) && return 0
   case "$out" in
     *rejected*|*"fetch first"*|*non-fast-forward*) return 0 ;;
     *"read only"*|*"read-only"*|*"denied to"*|*"Permission denied"*) return 1 ;;

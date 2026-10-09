@@ -199,6 +199,9 @@ _commit_repo(){
   git add -A -- . "${exclude_specs[@]}" || { log "git add failed"; return 1; }
   rm -f "$oversized"
   while IFS= read -r -d '' big; do
+    # Only a file this Mac just tried to share counts. One a colleague already pushed (tracked,
+    # unchanged) stages nothing, so it is not "left out" and must not raise a standing alarm.
+    git diff --cached --quiet -- "$big" && continue
     log "REJECT oversized: ${big#./}"
     printf '%s\n' "${big#./}" >> "$oversized"
     git reset -q -- "$big" || rc=1
