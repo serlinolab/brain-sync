@@ -132,6 +132,13 @@ fails with "marked as read only"). The answer picks the mode, so a Mac never nee
   person had written meanwhile (uncommitted edits, new files, unpushed commits) is copied first to
   `~/Serlinolab/.state/brain-unsent/<UTC time>/` (`files/` and `changes.patch`), and the attention
   file says so for 24 hours.
+  "Written meanwhile" is measured against what that clone last had (and its unpushed commits), not
+  against the freshly fetched origin, so a colleague's upstream change is never reported as the person's
+  unsent work. A protected page changed anyway goes to `.state/protected-edits/` instead, as in
+  writable mode. **If any copy cannot be made** (full disk, no temporary file, unwritable `.state`),
+  nothing is restored, reset or cleaned that cycle: the cycle exits non-zero, `sync.log` says "could
+  not keep a copy", and the attention file says nothing in the folder was changed
+  (`.state/brain_preserve_failed` holds the reason and goes away on the next cycle that succeeds).
 - **Writable key**: the same pipeline as `team/` (secret scan, 10 MB limit, OS junk, union merge of text
   conflicts, binary conflicts parked with both copies, autostash check, remote-match check, offline
   local commit), with its own state files (`brain_*`, `brain-conflicts/`) so a parked Brain never blocks
