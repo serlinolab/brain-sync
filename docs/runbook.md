@@ -25,11 +25,13 @@ Check the result with `./fleet-status.sh`.
 
    Add `--dry-run` first if you want to see what it would do without changing anything.
 3. `provision.sh` creates `serlinolab/brain-team` (private) the first time it's ever run, and
-   registers two GitHub deploy keys for that person+Mac: a read-only one on
-   `Serlinolab-Brain` and a read-write one on `brain-team`.
+   registers two GitHub deploy keys for that person+Mac, both read-write: one on
+   `Serlinolab-Brain` (since MAX-1790; it used to be read-only - see "Editing the Brain directly")
+   and one on `brain-team`.
 4. Re-running provision.sh with the same pasted line is always safe - it recognises the
-   deploy keys are already registered and does nothing further. It never deletes or
-   overwrites a key.
+   deploy keys are already registered and does nothing further. It never overwrites a key. The one
+   change it ever makes to an existing key is upgrading a read-only `Serlinolab-Brain` key to
+   write access (delete and re-register the same key); any other mismatch is refused.
 5. That's it - nothing to tell the creator. Their Mac's own background sync job (already
    installed by their first and only `setup.sh` run) calls `complete_setup`
    (`lib/complete_setup.sh`) every cycle; once the key is registered, the very next cycle
@@ -64,6 +66,107 @@ Delete the one belonging to the Mac you're revoking (use its `id` from the listi
 gh api -X DELETE repos/serlinolab/brain-team/keys/<id>
 gh api -X DELETE repos/serlinolab/Serlinolab-Brain/keys/<id>
 ```
+
+## Editing the Brain directly (MAX-1790)
+
+Everyone edits `~/Serlinolab/Serlinolab_Brain` directly. A save to any **unprotected** file is
+committed under that person's sync identity and pushed to `serlinolab/Serlinolab-Brain` `main`
+within one cycle (5 minutes), and reaches every other Mac the cycle after. **Protected** paths
+stay read-only on disk and are never committed by the engine. Two layers keep them out:
+
+1. **GitHub** (server side): the push ruleset `brain-protected-paths` refuses any push that touches a
+   protected path (`GH013`, "push declined due to repository rule violations", "File path is restricted").
+2. **The engine** (`lib/protected_paths.sh`, `lib/brain_write.sh`): protected paths are put back
+   before anything is staged, and excluded from `git add` as a second layer.
+
+### The protected paths
+
+A repo-relative path is protected when **any** of these holds (case-sensitive, like the ruleset):
+
+- its name is `CLAUDE.md`, `CLAUDE.local.md` or `AGENTS.md`, at any depth;
+- any directory component is `.claude` or `.agents` (the `.agents` symlink to `.claude/skills` is protected as a path itself);
+- it is under top-level `method/`;
+- it is one of the seven files the nightly export owns: `audits/latest-weekly.md`,
+  `company/stock-status.md`, `competitors/README.md`, `voice-of-customer/corpus-profile.md`,
+  `voice-of-customer/phrase-bank-it.md`, `voice-of-customer/phrase-bank-us.md`,
+  `voice-of-customer/support-requests.md`.
+
+**The list lives in one place in the engine, `lib/protected_paths.sh`, and it must mean the same as
+the ruleset.** Change them together. An engine stricter than the ruleset is harmless; a ruleset stricter than
+the engine only costs the refusal path described below on every such change. Edit the arrays in that
+file, then run `tests/brain_two_way.bats`, which
+checks the 18 refused and the open paths against both the predicate and the `git add` pathspecs.
+
+### The ruleset, before and after (2026-10-07 and 2026-10-09)
+
+Ruleset `brain-protected-paths` (id 24669694, target `push`, enforcement `active`). Bypass:
+organisation admins and one integration (id 5001512), always. No branch conditions.
+
+- **Before** (created 2026-10-07): `file_path_restriction` with 18 patterns: `CLAUDE.md`, `**/CLAUDE.md`,
+  `CLAUDE.local.md`, `**/CLAUDE.local.md`, `AGENTS.md`, `**/AGENTS.md`, `.claude/**`, `**/.claude/**`,
+  `.agents/**`, `**/.agents/**`, `method/**`, and the seven export files.
+- **After** (updated 2026-10-09): the same 18 plus five: `.claude/**/*`, `**/.claude/**/*`,
+  `.agents/**/*`, `**/.agents/**/*`, `method/**/*`. After the update a live probe on a throwaway branch refused all 18 protected paths
+  (including new files under `.claude/`, `.agents/` and `method/` and at depth) and accepted the two
+  unprotected ones (`company/brand-rules.md`, `running-notes/max-1790-probe.md`). The reason for the
+  extra patterns was not written down.
+- **Earlier still:** classic branch protection on `main` ("push restricted to maxmon64, pull request
+  required") was removed on 2026-10-07 when the ruleset went in. Its JSON was never saved, so only
+  that one-line description of it survives; do not expect to restore it from a file.
+
+### Which Macs write: the per-cycle mode switch
+
+Each cycle, after fetching, `sync_mirror` asks GitHub whether **this Mac's deploy key** may push
+(`git push --dry-run`, which authenticates against receive-pack and sends nothing; a read-only key
+fails with "marked as read only"). The answer picks the mode, so a Mac never needs to be told:
+
+- **Read-only key** (every Mac until its key is upgraded, and again after a rollback): the old
+  mirror, unchanged - fetch, `reset --hard`, `clean`, everything read-only. One addition: anything a
+  person had written meanwhile (uncommitted edits, new files, unpushed commits) is copied first to
+  `~/Serlinolab/.state/brain-unsent/<UTC time>/` (`files/` and `changes.patch`), and the attention
+  file says so for 24 hours.
+- **Writable key**: the same pipeline as `team/` (secret scan, 10 MB limit, OS junk, union merge of text
+  conflicts, binary conflicts parked with both copies, autostash check, remote-match check, offline
+  local commit), with its own state files (`brain_*`, `brain-conflicts/`) so a parked Brain never blocks
+  `team/`. `.state/brain-writable` records the last answer; it is what lets the network-free local
+  commit run before the probe. A probe that cannot tell (network trouble) keeps the previous mode.
+
+A protected path that a person changed is copied to `~/Serlinolab/.state/protected-edits/<UTC time>/<path>`
+and put back to what the Brain has (removed if it is new); the attention file says a locked page was
+not shared and where the text is. If a push is still refused by the ruleset (commits made outside the
+engine), the protected parts of the unpushed commits are moved to `protected-edits` the same way, the
+commits are rebuilt without them and pushed once more; the refused state is recorded in
+`.state/brain_push_parked` so the same commits are never pushed again until origin or the commits change.
+
+### Upgrading a Mac's key to write access
+
+`provision.sh` registers the Brain key with write access for every new Mac. Existing Macs hold a
+read-only key; GitHub cannot flip `read_only` on a key, so the script deletes it and registers the
+**same public key under the same title** again. Nothing is needed from the Mac:
+
+```
+./provision.sh --dry-run --upgrade-brain-key "brain-mirror alice alices-mac"   # prints what it would do
+./provision.sh --upgrade-brain-key "brain-mirror alice alices-mac"
+```
+
+(the title is in `gh api repos/serlinolab/Serlinolab-Brain/keys`; or re-run the Mac's pasted
+`SERLINO-BRAIN-SETUP` line, which upgrades the same way). It is idempotent. Re-registering a
+`brain-team` key, or any other change of a key's `read_only`, is still refused. The Mac switches to
+editable on its own the next cycle.
+
+### Rollback
+
+Re-register the Mac's Brain key as read-only (delete it and add it again with `read_only=true`, or
+`gh api` by hand) and/or restore the previous engine. Each Mac falls back to mirror mode on its next
+cycle; whatever it had written and not sent is in `~/Serlinolab/.state/brain-unsent/`. The ruleset can
+stay: it only ever refuses protected paths.
+
+### Revoking a key now cuts a writer, not only a reader
+
+A Brain deploy key with write access can push. Deleting it (see "Revoking access") stops that Mac's
+pushes as well as its fetches. Protected paths are the only thing a writable key cannot push, and only
+because of the ruleset and the engine - a person with the key and a hand-made git client is held by
+the ruleset alone.
 
 ## The Serlino Brain launcher
 

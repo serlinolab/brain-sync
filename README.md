@@ -20,7 +20,8 @@ appear on their own within a few minutes of his approval.
 A folder called `Serlinolab` in your home folder, with:
 
 - **Serlinolab_Brain/** — the Serlino brain, kept current on its own. Open the
-  Code tab here to work — this is where its rules apply.
+  Code tab here to work — this is where its rules apply. You can edit it too
+  (see "Editing the Brain" below).
 - **team/** — notes shared with the whole team. Save something here and
   everyone else sees it within a few minutes. What they save, you see too.
 - **personal/** — yours alone, private to this Mac, with three folders inside
@@ -67,6 +68,24 @@ You may also have an older **Serlino Brain** shortcut on your Desktop (from befo
 existed, or on a Mac older than macOS 14); it does the same as Open Brain, and the brain menu
 offers to remove it.
 
+## Editing the Brain
+
+The Brain folder is yours to edit directly. Save a change to a page in
+**Serlinolab_Brain** and it reaches everyone else's Mac within a few minutes; what they
+change reaches you the same way. You don't send anything.
+
+A few things stay locked on purpose, and open read-only: the Brain's rules and skills
+(every file named `CLAUDE.md` or `AGENTS.md`, and the hidden `.claude` and `.agents`
+folders), the **method** folder, and the pages the nightly update writes by itself (the
+weekly audit, the stock status, the competitors overview, and the customer-voice summaries
+and phrase banks). If you change one of those anyway, the change is not shared: your text is
+put aside in `Serlinolab/.state/protected-edits/` and the "SOMETHING NEEDS YOUR ATTENTION.txt"
+file tells you where. Nothing is lost.
+
+Editing switches on for each Mac separately, when Max enables it. Until then the Brain
+stays read-only, exactly as before. If it is ever switched off again, anything you had
+written and not yet shared is kept in `Serlinolab/.state/brain-unsent/`.
+
 ## Sharing a skill
 
 A skill is just an instruction — saving one in `team/` never switches it on
@@ -86,8 +105,8 @@ The Serlino brain reads its data from MediaBuy. Without this step it can't see a
 
 ## What leaves your Mac, and what never does
 
-Only `team/` leaves this Mac, and only to the team's own shared space —
-never public, never anywhere else. Everything in `personal/` never leaves
+Only `team/` and your changes to the Brain folder leave this Mac, and only to the
+company's own shared spaces — never public, never anywhere else. Everything in `personal/` never leaves
 this Mac, full stop. That's a fact about how this is built, not a setting
 you could turn off.
 
@@ -99,7 +118,8 @@ use) if you'd want it back after your Mac is lost, stolen, or wiped.
 
 If two people write in the same note at the same time, both versions are kept automatically —
 you'll never see this file for that. Only a picture or another file that isn't plain text can
-still need Max's help.
+still need Max's help. It also appears, for a day, when you changed a locked page in the Brain
+(see "Editing the Brain"); it says where your text was kept.
 
 Open it and read it — it explains what's going on in plain language. Your work is never lost when this
 appears, and it stays safely on your Mac either way. Send Max a message and it'll get sorted out.
