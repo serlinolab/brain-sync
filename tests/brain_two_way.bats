@@ -73,7 +73,7 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   [ "$(origin log -1 --format=%an)" = "Serlino Brain (testperson)" ]
   [[ "$(origin log -1 --format=%ae)" == brain-testperson@* ]] || false
   [ -z "$(git -C "$MIRROR" status --porcelain)" ]            # the signpost is not an uncommitted change
-  ! origin ls-tree -r --name-only main | grep -q "READ ME FIRST"
+  ! origin ls-tree -r --name-only main | grep -q "READ ME FIRST" || false
   grep -q "Save a change here" "$MIRROR/READ ME FIRST.txt"
   [ -f "$ROOT/what-changed.md" ]
 
@@ -121,7 +121,7 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   [ "$(cat "$kept/.claude/new.md")" = "new" ]
   grep -q "locked page" "$MARK"
   grep -qF "$STATE/protected-edits/" "$MARK"
-  ! grep -qi 'git\|commit\|rebase\|ruleset' "$MARK"
+  ! grep -qiwE 'git|commit|rebase|ruleset|push|branch' "$MARK" || false
   run bash -c "echo x >> '$MIRROR/CLAUDE.md'" 2>/dev/null; [ "$status" -ne 0 ]    # locked again
   run bash -c "touch '$MIRROR/method/n.md'" 2>/dev/null;   [ "$status" -ne 0 ]
 }
@@ -162,7 +162,7 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
 
 @test "the generated signpost is never committed, and the cycle after still sends nothing for it" {
   run_sync_cycle; run_sync_cycle
-  ! origin ls-tree -r --name-only main | grep -q "READ ME FIRST"
+  ! origin ls-tree -r --name-only main | grep -q "READ ME FIRST" || false
 }
 
 # --- the ruleset as a second layer ------------------------------------------------------------
@@ -173,8 +173,8 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   git -C "$MIRROR" add -A; git_commit "$MIRROR" "made by hand: protected and open together"
   run_sync_cycle
   origin show main:company/new-ok.md | grep -q ok
-  ! origin show main:CLAUDE.md | grep -q hacked
-  ! grep -q hacked "$MIRROR/CLAUDE.md"
+  ! origin show main:CLAUDE.md | grep -q hacked || false
+  ! grep -q hacked "$MIRROR/CLAUDE.md" || false
   grep -rq hacked "$STATE/protected-edits"
   grep -q "GitHub refused protected Brain paths" "$LOG"
   [ "$(cat "$BRAIN_ROOT/origin-mirror.git/pre-receive-calls" | wc -l | tr -d ' ')" = 2 ]   # one refusal, one success
@@ -220,7 +220,7 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   grep -q "committed but unsent" "$d/files/sub/file.txt"
   grep -q "committed but unsent" "$d/changes.patch"
   grep -q "can no longer change" "$MARK"
-  ! origin show main:sub/file.txt | grep -q "committed but unsent"
+  ! origin show main:sub/file.txt | grep -q "committed but unsent" || false
   run_sync_cycle                                    # a second read-only cycle keeps nothing new
   [ "$(ls "$STATE/brain-unsent" | wc -l | tr -d ' ')" = 1 ]
 }
@@ -263,7 +263,7 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   printf 'key=AKIAABCDEFGHIJKLMNOP\n' > "$MIRROR/company/oops.md"
   echo fine > "$MIRROR/company/fine.md"
   run_sync_cycle
-  ! origin ls-tree -r --name-only main | grep -q oops.md
+  ! origin ls-tree -r --name-only main | grep -q oops.md || false
   origin show main:company/fine.md >/dev/null
   [ -f "$MIRROR/company/oops.md" ]
   grep -q "password or access key" "$MARK"
@@ -274,7 +274,9 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   dd if=/dev/zero of="$MIRROR/company/huge.bin" bs=1048576 count=11 2>/dev/null
   echo fine > "$MIRROR/company/fine.md"
   run_sync_cycle
-  ! origin ls-tree -r --name-only main | grep -q huge.bin
+  ! origin ls-tree -r --name-only main | grep -q huge.bin || false
+  ! origin log --all --name-only --format= | grep -q huge.bin || false   # in no commit of any ref, not just main's tip
+  ! git -C "$MIRROR" log --all --name-only --format= | grep -q huge.bin || false
   origin show main:company/fine.md >/dev/null
   grep -q "too big to share" "$MARK"
   grep -q "huge.bin" "$MARK"
@@ -292,7 +294,7 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   git -C "$MIRROR" add -f company/.DS_Store; git_commit "$MIRROR" "junk by an older engine"
   run_sync_cycle
   origin show main:company/real.md >/dev/null
-  ! origin log --all --name-only | grep -q 'DS_Store\|AppleDouble'
+  ! origin log --all --name-only | grep -q 'DS_Store\|AppleDouble' || false
   [ -f "$MIRROR/company/.DS_Store" ]                 # still on disk, only out of git
 }
 
@@ -341,7 +343,7 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   grep -q "could not be" "$MARK"
   grep -q "Serlinolab_Brain" "$MARK"
   git -C "$MIRROR" stash list | grep -q .
-  ! origin show main:sub/file.txt | grep -q "<<<<<<<"
+  ! origin show main:sub/file.txt | grep -q "<<<<<<<" || false
 }
 
 @test "a Brain whose origin was swapped is neither committed to nor pushed from" {
