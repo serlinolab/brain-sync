@@ -111,7 +111,9 @@ sync_mirror(){
     return $?
   fi
   # Read-only. A Mac that WAS writable (key turned back to read-only) may hold unsent text.
-  brain_preserve_unsent
+  # A copy that fails stops everything below: no reset, no clean, no re-lock - the folder stays as
+  # the person left it, and the attention marker says so (brain_attention).
+  brain_preserve_unsent || return 1
   rm -f "$BRAIN_WRITABLE"
   rc=0
   chmod -R u+w "$MIRROR" 2>/dev/null || true   # git needs write only after the fetch

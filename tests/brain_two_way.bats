@@ -134,7 +134,8 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   run_sync_cycle
   origin show main:company/open.md >/dev/null
   ! origin ls-tree -r --name-only main | grep -qi 'notes/claude.md\|agents.md\|skills/x' || false
-  [ ! -e "$MIRROR/notes/claude.md" ] && [ ! -e "$MIRROR/company/agents.md" ]
+  [ ! -e "$MIRROR/notes/claude.md" ]
+  [ ! -e "$MIRROR/company/agents.md" ]
   [ "$(cat "$STATE"/protected-edits/*/notes/claude.md)" = lower ]
   [ "$(cat "$STATE"/protected-edits/*/company/agents.md)" = agents ]
   grep -q "locked page" "$MARK"
@@ -255,6 +256,97 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   [ -e "$STATE/brain-writable" ]
   [ -f "$MIRROR/company/w.md" ]
   grep -q "could not tell whether this Mac may write" "$LOG"
+}
+
+# A colleague's push to the Brain, from a throwaway clone.
+colleague_push() {
+  local o; o=$(mktemp -d); git clone -q "$BRAIN_ROOT/origin-mirror.git" "$o"
+  mkdir -p "$o/$(dirname "$1")"; echo "$2" > "$o/$1"
+  git -C "$o" add -A; git_commit "$o" colleague; git -C "$o" push -q origin main; rm -rf "$o"
+}
+nothing_kept() { [ ! -d "$STATE/$1" ] || [ -z "$(ls -A "$STATE/$1")" ]; }
+
+@test "a read-only Mac with no work of its own does not call a colleague's upstream change its unsent work" {
+  make_brain_readonly; run_sync_cycle
+  colleague_push sub/file.txt "alice edit"      # an existing page changes upstream: the old copy here now differs from origin
+  run_sync_cycle
+  [ "$(cat "$MIRROR/sub/file.txt")" = "alice edit" ]
+  nothing_kept brain-unsent
+  [ ! -f "$MARK" ]
+}
+
+@test "a read-only Mac with work of its own keeps only that work, not what a colleague changed meanwhile" {
+  make_brain_readonly; run_sync_cycle
+  chmod -R u+w "$MIRROR"; echo "mine" > "$MIRROR/company/brand-rules.md"
+  colleague_push company/colleague.md "from alice"
+  colleague_push sub/file.txt "alice edit"
+  run_sync_cycle
+  local d; d=$(ls -d "$STATE"/brain-unsent/*)
+  [ "$(cat "$d/files/company/brand-rules.md")" = mine ]
+  [ ! -e "$d/files/company/colleague.md" ]
+  [ ! -e "$d/files/sub/file.txt" ]
+  ! grep -q "alice" "$d/changes.patch" || false
+}
+
+@test "a protected page changed on a read-only Mac is kept aside before it is put back, and the person is told" {
+  make_brain_readonly; run_sync_cycle
+  edit_protected CLAUDE.md "my rule"
+  chmod u+w "$MIRROR/method"; echo "my method" > "$MIRROR/method/new.md"
+  chmod u+w "$MIRROR/company"; rm -f "$MIRROR/company/stock-status.md"
+  run_sync_cycle
+  local kept; kept=$(ls -d "$STATE"/protected-edits/*)
+  [ "$(cat "$kept/CLAUDE.md")" = "my rule" ]
+  [ "$(cat "$kept/method/new.md")" = "my method" ]
+  [ "$(cat "$MIRROR/CLAUDE.md")" = "$(origin show main:CLAUDE.md)" ]
+  [ ! -e "$MIRROR/method/new.md" ]
+  [ -e "$MIRROR/company/stock-status.md" ]
+  grep -q "locked page" "$MARK"
+}
+
+# --- a copy that cannot be made must stop the reset, never follow it ---------------------------------
+
+@test "read-only: when the unsent work cannot be copied, nothing is reset or deleted and the person is told" {
+  make_brain_readonly; run_sync_cycle
+  chmod -R u+w "$MIRROR"; echo "mine" > "$MIRROR/company/brand-rules.md"; echo "new" > "$MIRROR/company/fresh.md"
+  colleague_push company/colleague.md "from alice"
+  echo "in the way" > "$STATE/brain-unsent"                  # the folder it must write into cannot be made
+  run run_sync_cycle
+  [ "$status" -ne 0 ]
+  [ "$(cat "$MIRROR/company/brand-rules.md")" = mine ]
+  [ "$(cat "$MIRROR/company/fresh.md")" = new ]
+  [ "$(git -C "$MIRROR" rev-parse HEAD)" != "$(origin rev-parse main)" ]        # no reset either
+  grep -q "could not keep" "$LOG"
+  grep -q "Nothing in the Serlinolab_Brain folder was changed" "$MARK"
+  ! grep -qiwE 'git|commit|rebase|reset|clean' "$MARK" || false
+  rm -f "$STATE/brain-unsent"; run_sync_cycle                                   # the cause goes away: it all happens
+  [ "$(git -C "$MIRROR" rev-parse HEAD)" = "$(origin rev-parse main)" ]
+  [ "$(cat "$STATE"/brain-unsent/*/files/company/brand-rules.md)" = mine ]
+  ! grep -q "Nothing in the Serlinolab_Brain folder was changed" "$MARK" 2>/dev/null || false
+}
+
+@test "read-only: when no temporary file can be made, nothing is reset either" {
+  make_brain_readonly; run_sync_cycle
+  chmod -R u+w "$MIRROR"; echo "mine" > "$MIRROR/company/brand-rules.md"
+  colleague_push company/colleague.md "from alice"
+  TMPDIR="$BRAIN_ROOT/no-such-tmp" run run_sync_cycle
+  [ "$(cat "$MIRROR/company/brand-rules.md")" = mine ]
+  [ "$(git -C "$MIRROR" rev-parse HEAD)" != "$(origin rev-parse main)" ]
+  grep -q "could not keep" "$LOG"
+}
+
+@test "writable: when a protected edit cannot be copied it stays exactly as the person left it, and is still not shared" {
+  edit_protected CLAUDE.md "my rule"
+  echo "in the way" > "$STATE/protected-edits"
+  echo "a real note" >> "$MIRROR/company/brand-rules.md"
+  run run_sync_cycle
+  [ "$status" -ne 0 ]
+  [ "$(cat "$MIRROR/CLAUDE.md")" = "my rule" ]                                  # not restored
+  ! origin show main:CLAUDE.md | grep -q "my rule" || false                      # not shared
+  origin show main:company/brand-rules.md | grep -q "a real note"                # the rest still goes out
+  grep -q "Nothing in the Serlinolab_Brain folder was changed" "$MARK"
+  rm -f "$STATE/protected-edits"; run_sync_cycle                                 # recovers once the cause is gone
+  [ "$(cat "$STATE"/protected-edits/*/CLAUDE.md)" = "my rule" ]
+  [ "$(cat "$MIRROR/CLAUDE.md")" = "$(origin show main:CLAUDE.md)" ]
 }
 
 # --- every team/ safeguard, on the Brain -------------------------------------------------------------

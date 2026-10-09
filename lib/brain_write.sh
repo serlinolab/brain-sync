@@ -33,6 +33,23 @@ _brain_keep_dir(){
   mkdir -p "$d" && printf '%s' "$d"
 }
 
+# A copy of a person's Brain work could not be made. Whoever called this must not go on to
+# restore / reset / clean: it logs, leaves a state file the attention marker reads (brain_attention),
+# and returns 1. $1 is the reason, for the log.
+_brain_preserve_fail(){
+  log "could not keep a copy of work in the Brain folder ($1); changing nothing in it this cycle"
+  printf '%s\n' "$1" > "$BRAIN_PRESERVE_FAILED" 2>/dev/null
+  return 1
+}
+
+# Copy $MIRROR/$4 to <this run's folder>/$3$4. $1 = state folder the run's folder lives in, $2 = NAME of
+# the variable holding this run's folder (made on first use), $3 = "" or "files/".
+_brain_keep_one(){
+  local d="${!2}"
+  if [ -z "$d" ]; then d=$(_brain_keep_dir "$1") || return 1; printf -v "$2" '%s' "$d"; fi
+  mkdir -p "$d/$3$(dirname "$4")" && cp -RP -- "$MIRROR/$4" "$d/$3$4"
+}
+
 # Protected files and directories lose their write bit, everything else stays writable. Files are
 # listed by git (tracked), directories by find; both judged by brain_path_protected.
 brain_lock_protected(){
@@ -49,14 +66,20 @@ brain_lock_protected(){
 
 # cwd = $MIRROR. A protected path that changed (edited, created, deleted) is copied, if it still
 # exists, to .state/protected-edits/<time>/<path>, then put back to what HEAD has (removed if HEAD
-# has nothing). Runs before staging, so a protected path never reaches a commit.
+# has nothing). Runs before staging, so a protected path never reaches a commit. A path whose copy
+# fails is NOT put back (its text would be gone) - it stays as the person left it, the
+# git add exclusions still keep it out of the commit, and this returns 1.
 brain_keep_protected_edits(){
-  local p dest=""
+  local p dest="" list failed=0
+  list=$(mktemp "${TMPDIR:-/tmp}/brain-list.XXXXXX") || { _brain_preserve_fail "no temporary file"; return 1; }
+  { git diff --name-only -z --no-renames HEAD -- && git ls-files -o --exclude-standard -z; } > "$list" 2>/dev/null \
+    || { rm -f "$list"; _brain_preserve_fail "could not list what changed"; return 1; }
   while IFS= read -r -d '' p; do
     brain_path_protected "$p" || continue
     if [ -e "$p" ] || [ -L "$p" ]; then
-      [ -n "$dest" ] || dest=$(_brain_keep_dir "$BRAIN_PROTECTED_EDITS")
-      mkdir -p "$dest/$(dirname "$p")" && cp -RP -- "$p" "$dest/$p"
+      if ! _brain_keep_one "$BRAIN_PROTECTED_EDITS" dest "" "$p"; then
+        failed=1; log "could not copy protected Brain file $p aside; leaving it as it is"; continue
+      fi
     fi
     if git cat-file -e "HEAD:$p" 2>/dev/null; then
       git checkout -q HEAD -- "$p"
@@ -65,8 +88,10 @@ brain_keep_protected_edits(){
       rm -rf -- "$p"; rmdir -p "$(dirname "$p")" 2>/dev/null
     fi
     log "protected Brain file changed, not shared: $p (${dest:+kept in $dest, }put back)"
-  done < <(git diff --name-only -z --no-renames HEAD --; git ls-files -o --exclude-standard -z)
-  return 0
+  done < "$list"
+  rm -f "$list"
+  [ "$failed" -eq 0 ] || { _brain_preserve_fail "a locked page could not be copied aside"; return 1; }
+  rm -f "$BRAIN_PRESERVE_FAILED"
 }
 
 commit_brain(){
@@ -77,36 +102,61 @@ commit_brain(){
     log "mirror origin does not match the expected remote; refusing to touch it"
     return 1
   fi
-  local rc=0
+  local rc=0 keep_rc=0
   chmod -R u+w "$MIRROR" 2>/dev/null || true
   cd "$MIRROR" || return 1
-  brain_keep_protected_edits
+  brain_keep_protected_edits || keep_rc=3
   _commit_repo "$MIRROR" brain || rc=$?
   brain_lock_protected
+  [ "$keep_rc" -eq 0 ] || return "$keep_rc"   # 3: a copy failed (the cycle exits non-zero for the Brain)
   return "$rc"
 }
 
-# Writing was switched off again (or never on): save what a person left in the folder before
-# the reset below erases it - uncommitted edits, new files, and commits that never got pushed.
-# Protected paths are not kept here (they are never the person's to send).
+# The Mac is read-only now (the key never could write, or was turned back to read-only) and the
+# reset below would erase whatever a person left in the folder. Saved first, all measured against
+# what THIS clone last had (HEAD) and what it had committed without pushing (origin/main..HEAD) - never
+# against the origin that was just fetched, or a colleague's upstream change would look like the
+# person's own:
+#   - unprotected work (uncommitted edits, new files, unpushed commits) -> .state/brain-unsent/<time>/
+#     files/<path> plus changes.patch;
+#   - protected paths someone changed anyway (the lock was overridden) -> .state/protected-edits/<time>/<path>,
+#     the same place and notice as in writable mode.
+# Returns 1 if ANY copy could not be made; the caller then resets nothing.
 brain_preserve_unsent(){
-  local list dest="" p n=0
-  list=$(mktemp) || return 0
-  { git -C "$MIRROR" diff --name-only -z --no-renames origin/main --
-    git -C "$MIRROR" ls-files -o --exclude-standard -z; } > "$list" 2>/dev/null
+  local list base udest="" pdest="" p n=0 np=0 have_head=0
+  git -C "$MIRROR" rev-parse -q --verify HEAD >/dev/null 2>&1 && have_head=1
+  list=$(mktemp "${TMPDIR:-/tmp}/brain-list.XXXXXX") || { _brain_preserve_fail "no temporary file"; return 1; }
+  base=$(git -C "$MIRROR" merge-base origin/main HEAD 2>/dev/null) || base=HEAD
+  {
+    if [ "$have_head" -eq 1 ]; then
+      git -C "$MIRROR" log -z --format= --name-only --no-renames origin/main..HEAD -- &&
+      git -C "$MIRROR" diff --name-only -z --no-renames HEAD --
+    fi &&
+    git -C "$MIRROR" ls-files -o --exclude-standard -z
+  } > "$list" 2>/dev/null || { rm -f "$list"; _brain_preserve_fail "could not list what changed"; return 1; }
   while IFS= read -r -d '' p; do
-    brain_path_protected "$p" && continue
-    [ "$p" = "$BRAIN_SIGNPOST" ] && continue
+    [ -n "$p" ] && [ "$p" != "$BRAIN_SIGNPOST" ] || continue
     [ -e "$MIRROR/$p" ] || [ -L "$MIRROR/$p" ] || continue
-    [ -n "$dest" ] || dest=$(_brain_keep_dir "$BRAIN_UNSENT") || break
-    mkdir -p "$dest/files/$(dirname "$p")" && cp -RP -- "$MIRROR/$p" "$dest/files/$p" && n=$((n+1))
+    if brain_path_protected "$p"; then
+      [ -e "$pdest/$p" ] || [ -L "$pdest/$p" ] || {
+        _brain_keep_one "$BRAIN_PROTECTED_EDITS" pdest "" "$p" || { rm -f "$list"; _brain_preserve_fail "a locked page"; return 1; }
+        np=$((np+1)); }
+    else
+      [ -e "$udest/files/$p" ] || [ -L "$udest/files/$p" ] || {
+        _brain_keep_one "$BRAIN_UNSENT" udest files/ "$p" || { rm -f "$list"; _brain_preserve_fail "an unsent page"; return 1; }
+        n=$((n+1)); }
+    fi
   done < "$list"
   rm -f "$list"
-  [ "$n" -gt 0 ] || return 0
-  local -a ex=()
-  while IFS= read -r p; do ex+=("$p"); done < <(brain_protected_excludes)
-  git -C "$MIRROR" diff --binary origin/main -- . "${ex[@]}" > "$dest/changes.patch" 2>/dev/null
-  log "this Mac can no longer write to the Brain; $n unsent file(s) kept in $dest"
+  if [ "$n" -gt 0 ]; then
+    local -a ex=()
+    while IFS= read -r p; do ex+=("$p"); done < <(brain_protected_excludes)
+    git -C "$MIRROR" diff --binary "$base" -- . "${ex[@]}" > "$udest/changes.patch" 2>/dev/null \
+      || { _brain_preserve_fail "the patch of unsent work"; return 1; }
+    log "this Mac can no longer write to the Brain; $n unsent file(s) kept in $udest"
+  fi
+  [ "$np" -eq 0 ] || log "locked Brain page(s) changed on a read-only Mac, not shared: $np kept in $pdest"
+  rm -f "$BRAIN_PRESERVE_FAILED"
 }
 
 # The push step's hook (lib/sync.sh, _sync_after_fetch). "gate": 0 go ahead, 1 skip as a failure
@@ -133,7 +183,7 @@ brain_push_hook(){
   dest=$(_brain_keep_dir "$BRAIN_PROTECTED_EDITS") || return 1
   for p in "${prot[@]}"; do
     if git cat-file -e "HEAD:$p" 2>/dev/null; then
-      mkdir -p "$dest/$(dirname "$p")" && git show "HEAD:$p" > "$dest/$p"
+      mkdir -p "$dest/$(dirname "$p")" && git show "HEAD:$p" > "$dest/$p" || { _brain_preserve_fail "a refused locked page"; return 1; }
     fi
   done
   git reset -q --soft origin/main || return 1
@@ -166,6 +216,9 @@ _sync_brain_two_way(){
 brain_attention(){
   [ -d "$MIRROR/.git" ] || return 1
   local f age_h d
+  if [ -f "$BRAIN_PRESERVE_FAILED" ]; then
+    printf 'Some changes in the Serlinolab_Brain folder could not be saved to a safe place on this Mac.\nNothing in the Serlinolab_Brain folder was changed - your files are exactly as you left them.\nPlease tell Max.\n' > "$MARK"; return 0
+  fi
   if [ -s "$STATE/brain_oversized_rejects" ]; then
     printf 'A file in the Serlinolab_Brain folder is too big to share and was left out:\n  %s\n' "$(head -1 "$STATE/brain_oversized_rejects")" > "$MARK"; return 0
   fi

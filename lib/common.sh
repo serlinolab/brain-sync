@@ -55,6 +55,7 @@ BRAIN_PUSH_PARKED="$STATE/brain_push_parked"          # "<origin sha> <local sha
 BRAIN_CONFLICTS="$STATE/brain-conflicts"
 BRAIN_PROTECTED_EDITS="$STATE/protected-edits"        # text a person wrote into a protected Brain file
 BRAIN_UNSENT="$STATE/brain-unsent"                    # Brain work saved when writing was switched off again
+BRAIN_PRESERVE_FAILED="$STATE/brain_preserve_failed"  # a copy of a person's Brain work failed: nothing was reset
 BRAIN_NOTICE_MINUTES="${BRAIN_NOTICE_MINUTES:-1440}"  # how long the attention file mentions the two above
 QUARANTINE="$STATE/quarantine"    # AC-4: locally-created instruction files are moved here, never deleted
 ONLINE_CHECK_REMOTE="${ONLINE_CHECK_REMOTE:-git@brain-mirror:serlinolab/Serlinolab-Brain.git}"
