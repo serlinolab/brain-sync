@@ -86,6 +86,15 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   [ "$(origin log -1 --format=%an)" = "Serlino Brain (karl)" ]
 }
 
+@test "a two-way cycle tells the menu-bar app it synced: the log says mirror at, the line the app reads" {
+  # 2026-10-09: the Brain step logged "brain at", which brain-app's SyncStatus never counts as a
+  # mirror step, so every writable Mac stayed yellow ("no mirror step this cycle") for good.
+  echo "new rule" >> "$MIRROR/company/brand-rules.md"
+  run_sync_cycle
+  grep -q "mirror at " "$STATE/sync.log"
+  ! grep -q "Z brain at " "$STATE/sync.log" || false
+}
+
 @test "everything except the protected paths is writable, and the protected ones refuse a plain write" {
   touch "$MIRROR/company/x.md" "$MIRROR/root-file.md"; mkdir "$MIRROR/company/newdir"
   echo more >> "$MIRROR/company/brand-rules.md"
