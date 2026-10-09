@@ -79,18 +79,26 @@ brain_unstage_protected(){
 
 # cwd = $MIRROR. A protected path that changed (edited, created, deleted) is copied, if it still
 # exists, to .state/protected-edits/<time>/<path>, then put back to what HEAD has (removed if HEAD
-# has nothing). Runs before staging, so a protected path never reaches a commit. ALL OR NOTHING: every
+# has nothing). A protected path whose text exists only in the index (git add, then the file put back
+# on disk) is saved the same way as .state/protected-edits/<time>/staged/<path>. Runs before staging, so
+# a protected path never reaches a commit. ALL OR NOTHING: every
 # copy is made first, and only when all of them worked is anything put back - one that fails leaves
 # every protected path exactly as the person left it (the caller then stops the cycle) and returns 1.
 brain_keep_protected_edits(){
   local p dest="" list
   local -a prot=()
   list=$(mktemp "${TMPDIR:-/tmp}/brain-list.XXXXXX") || { _brain_preserve_fail "no temporary file"; return 1; }
-  { git diff --name-only -z --no-renames HEAD -- && git ls-files -o --exclude-standard -z; } > "$list" 2>/dev/null \
+  { git diff --name-only -z --no-renames HEAD -- && git diff --cached --name-only -z --no-renames HEAD -- \
+      && git ls-files -o --exclude-standard -z; } > "$list" 2>/dev/null \
     || { rm -f "$list"; _brain_preserve_fail "could not list what changed"; return 1; }
-  while IFS= read -r -d '' p; do brain_path_protected "$p" && prot+=("$p"); done < "$list"
+  while IFS= read -r -d '' p; do brain_path_protected "$p" && prot+=("$p"); done < <(sort -zu "$list")
   rm -f "$list"
   for p in ${prot[@]+"${prot[@]}"}; do
+    if ! git diff --cached --quiet HEAD -- "$p" && git cat-file -e ":$p" 2>/dev/null; then   # staged text, whatever the disk says
+      { [ -n "$dest" ] || dest=$(_brain_keep_dir "$BRAIN_PROTECTED_EDITS"); } \
+        && mkdir -p "$dest/staged/$(dirname "$p")" && git show ":$p" > "$dest/staged/$p" \
+        || { log "could not copy staged protected Brain file $p aside; changing none of them"; _brain_preserve_fail "a staged locked page could not be copied aside"; return 1; }
+    fi
     [ -e "$p" ] || [ -L "$p" ] || continue
     _brain_keep_one "$BRAIN_PROTECTED_EDITS" dest "" "$p" \
       || { log "could not copy protected Brain file $p aside; changing none of them"; _brain_preserve_fail "a locked page could not be copied aside"; return 1; }
@@ -142,20 +150,26 @@ commit_brain(){
 # tracks with different text is copied to .state/brain-replaced/<time>/<path>. OS junk is not kept.
 # Needs a fresh origin/main. Returns 1 if a copy could not be made; the caller then changes nothing.
 brain_preserve_ignored(){
-  local list p blob dest="" n=0 s
+  local list tree p hit dest="" n=0 s
   local -a junk=()
   while IFS= read -r s; do junk+=("${s/:(/:(exclude,}"); done < <(team_os_junk_pathspecs)
   list=$(mktemp "${TMPDIR:-/tmp}/brain-list.XXXXXX") || { _brain_preserve_fail "no temporary file"; return 1; }
+  tree=$(mktemp "${TMPDIR:-/tmp}/brain-tree.XXXXXX") || { rm -f "$list"; _brain_preserve_fail "no temporary file"; return 1; }
   git -C "$MIRROR" ls-files -o -i --exclude-standard -z -- . "${junk[@]}" > "$list" 2>/dev/null \
-    || { rm -f "$list"; _brain_preserve_fail "could not list ignored files"; return 1; }
+    && git -C "$MIRROR" ls-tree -r -z origin/main 2>/dev/null | tr '\0' '\n' > "$tree" \
+    || { rm -f "$list" "$tree"; _brain_preserve_fail "could not list ignored files"; return 1; }
+  # An ignored file is lost when the incoming tree has a file at its path, spelled in any capitals (this
+  # Mac's volume folds them), or at one of its parent folders. Same text at the same path: nothing to lose.
+  # ponytail: paths with a newline in the incoming tree are not matched; ASCII-only case folding.
   while IFS= read -r -d '' p; do
-    blob=$(git -C "$MIRROR" rev-parse -q --verify "origin/main:$p" 2>/dev/null) || continue
-    [ "$(git -C "$MIRROR" cat-file -t "$blob" 2>/dev/null)" = blob ] || continue
-    [ -L "$MIRROR/$p" ] || [ "$(git -C "$MIRROR" hash-object -- "$p" 2>/dev/null)" != "$blob" ] || continue   # same text: nothing to lose
-    _brain_keep_one "$BRAIN_REPLACED" dest "" "$p" || { rm -f "$list"; _brain_preserve_fail "an ignored file"; return 1; }
+    hit=$(awk -F'\t' -v p="$p" 'BEGIN{lp=tolower(p)} {split($1,a," "); if(a[2]!="blob")next; q=tolower($2)
+      if(q==lp){print "E " a[3]; exit} if(index(lp,q "/")==1){print "P"; exit}}' "$tree")
+    [ -n "$hit" ] || continue
+    [ "${hit#E }" = "$hit" ] || [ -L "$MIRROR/$p" ] || [ "$(git -C "$MIRROR" hash-object -- "$p" 2>/dev/null)" != "${hit#E }" ] || continue
+    _brain_keep_one "$BRAIN_REPLACED" dest "" "$p" || { rm -f "$list" "$tree"; _brain_preserve_fail "an ignored file"; return 1; }
     n=$((n+1))
   done < "$list"
-  rm -f "$list"
+  rm -f "$list" "$tree"
   [ "$n" -eq 0 ] || log "$n ignored local file(s) are about to be replaced by a colleague's; kept in $dest"
 }
 
