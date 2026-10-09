@@ -48,7 +48,7 @@ key_line_count() { wc -l < "$FAKE_GH_STATE/repos/${1//\//__}.keys" 2>/dev/null |
   [ "$(key_line_count "$BRAIN_ORG/brain-team")" = 1 ]
   # MAX-1790: the Brain key is registered WITH write access now (it was read-only before)
   grep -q $'\tfalse$' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys"
-  ! grep -q $'\ttrue$' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys"
+  ! grep -q $'\ttrue$' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__Serlinolab-Brain.keys" || false
   grep -q $'\tfalse$' "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team.keys"
 }
 
@@ -449,4 +449,91 @@ seed_readonly_brain_key() {
   seed_readonly_brain_key
   run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "brain-mirror nobody nowhere"
   [ "$status" -ne 0 ]; [[ "$output" == *"no deploy key titled"* ]] || false
+}
+
+# --- MAX-1790 round 2: an ambiguous delete, and what the saved key is allowed to do ---------------------------
+
+T_ALICE="brain-mirror alice alices-mac"
+# the file provision.sh keeps: org, repo, title, public key (tab separated), named after the title
+saved_file() { printf '%s/upgrade-%s.tsv' "$BRAIN_PROVISION_STATE" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+write_saved() { mkdir -p "$BRAIN_PROVISION_STATE"; printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" > "$(saved_file "$T_ALICE")"; }
+writable_alice() { awk -F'\t' -v t="$T_ALICE" '$1==t && $3=="false"{f=1} END{exit !f}' "$(BRAIN_KEYS)"; }
+
+@test "K4 a delete that GitHub applied but answered with an error keeps the saved key, finds the key gone, and puts it back writable" {
+  seed_readonly_brain_key
+  FAKE_GH_DELETE_FAIL=after run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "$T_ALICE"
+  [ "$status" -eq 0 ]
+  writable_alice
+  [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 2 ]
+  [ -z "$(ls -A "$BRAIN_PROVISION_STATE" 2>/dev/null)" ]            # finished: nothing left to recover
+}
+
+@test "K4 a delete that failed and left the key in place keeps the saved key and changes nothing on GitHub" {
+  seed_readonly_brain_key
+  local before; before=$(cat "$(BRAIN_KEYS)")
+  FAKE_GH_DELETE_FAIL=before run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "$T_ALICE"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$(BRAIN_KEYS)")" = "$before" ]
+  grep -qF "ssh-ed25519 AAAAmirror" "$(saved_file "$T_ALICE")"
+}
+
+@test "K4 a delete of unknown outcome and a listing that then fails keeps the saved key; a re-run finishes the job" {
+  seed_readonly_brain_key
+  FAKE_GH_DELETE_FAIL=after FAKE_GH_KEYS_LOOKUP_FAIL_CALL=2 run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "$T_ALICE"
+  [ "$status" -ne 0 ]
+  grep -qF "ssh-ed25519 AAAAmirror" "$(saved_file "$T_ALICE")"
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "$T_ALICE"
+  [ "$status" -eq 0 ]
+  writable_alice
+}
+
+@test "S1 a stale saved key is dropped when the Mac is provisioned again with a new key, and cannot come back later" {
+  printf '%s\tssh-ed25519 AAAAmirror brain-mirror-alices-mac\ttrue\n' "$T_ALICE" > "$(BRAIN_KEYS)"
+  FAKE_GH_FAIL_KEY_POSTS=3 run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "$T_ALICE"
+  [ "$status" -ne 0 ]
+  [ -s "$(saved_file "$T_ALICE")" ]                                  # the old key is saved: the Mac has none on GitHub
+  rm -f "$FAKE_GH_STATE/key_post_count"
+  run bash "$REPO_ROOT/provision.sh" "${LINE/AAAAmirror/AAAAnewkey}"   # reinstalled Mac: new key, same title, via the setup line
+  [ "$status" -eq 0 ]
+  writable_alice
+  [ ! -e "$(saved_file "$T_ALICE")" ]                                # a writable key under that title exists: nothing left to recover
+  grep -v 'alices-mac' "$(BRAIN_KEYS)" > "$(BRAIN_KEYS).t" || true; mv "$(BRAIN_KEYS).t" "$(BRAIN_KEYS)"   # Max revokes this Mac
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "$T_ALICE"
+  [ "$status" -ne 0 ]
+  ! grep -q AAAAmirror "$(BRAIN_KEYS)" || false                      # the old key was not registered again
+}
+
+@test "S1 a saved key is dropped when a key under its title is found already registered" {
+  printf '%s\tssh-ed25519 AAAAmirror brain-mirror-alices-mac\tfalse\n' "$T_ALICE" > "$(BRAIN_KEYS)"
+  write_saved "$BRAIN_ORG" Serlinolab-Brain "$T_ALICE" "ssh-ed25519 AAAAold"
+  run bash "$REPO_ROOT/provision.sh" "$LINE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already registered"* ]] || false
+  [ ! -e "$(saved_file "$T_ALICE")" ]
+}
+
+@test "S1 --dry-run never drops a saved key" {
+  printf '%s\tssh-ed25519 AAAAmirror brain-mirror-alices-mac\tfalse\n' "$T_ALICE" > "$(BRAIN_KEYS)"
+  write_saved "$BRAIN_ORG" Serlinolab-Brain "$T_ALICE" "ssh-ed25519 AAAAold"
+  run bash "$REPO_ROOT/provision.sh" --dry-run "$LINE"
+  [ "$status" -eq 0 ]
+  [ -s "$(saved_file "$T_ALICE")" ]
+}
+
+@test "S5 a saved key is used only if its organisation, repository, title and key type all match this run" {
+  write_saved "$BRAIN_ORG" Serlinolab-Brain "$T_ALICE" "ssh-ed25519 AAAAold"                 # control: all four match
+  run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "$T_ALICE"
+  [ "$status" -eq 0 ]; writable_alice; [ ! -e "$(saved_file "$T_ALICE")" ]
+  local wrong
+  for wrong in "other-org|Serlinolab-Brain|$T_ALICE|ssh-ed25519 AAAAold" \
+               "$BRAIN_ORG|brain-team|$T_ALICE|ssh-ed25519 AAAAold" \
+               "$BRAIN_ORG|Serlinolab-Brain|brain-mirror bob bobs-mac|ssh-ed25519 AAAAold" \
+               "$BRAIN_ORG|Serlinolab-Brain|$T_ALICE|ssh-rsa AAAAold"; do
+    : > "$(BRAIN_KEYS)"
+    IFS='|' read -r o r t k <<<"$wrong"
+    write_saved "$o" "$r" "$t" "$k"
+    run bash "$REPO_ROOT/provision.sh" --upgrade-brain-key "$T_ALICE"
+    [ "$status" -ne 0 ]
+    [ ! -s "$(BRAIN_KEYS)" ]                                                                   # nothing was registered from it
+  done
 }

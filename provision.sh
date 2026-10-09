@@ -40,14 +40,19 @@ refuse(){ echo "Refusing: $*" >&2; exit 1; }
 # read-only key and registers the SAME public key again under the SAME title with write access.
 # The only read_only change this script ever makes, and only for the Brain repo.
 #
-# The delete is the dangerous half: a failure after it leaves the Mac with NO key. So (1) the title
-# and the PUBLIC key are saved to $RECOVERY_DIR before anything is deleted (a public key is not a
-# secret), and the upgrade refuses if that cannot be written; (2) the write registration is retried
-# once; (3) if it still fails, the old read-only key is registered again so the Mac keeps working;
-# (4) if even that fails, the exact way back is printed. Re-running `--upgrade-brain-key <title>`
-# reads the saved material, so the title alone is enough to finish after any of these failures.
+# The delete is the dangerous half: a failure after it leaves the Mac with NO key. So (1) the org,
+# repo, title and PUBLIC key are saved to $RECOVERY_DIR before anything is deleted (a public key is
+# not a secret), and the upgrade refuses if that cannot be written; (2) the write registration is
+# retried once; (3) if it still fails, the old read-only key is registered again so the Mac keeps
+# working; (4) if even that fails, the exact way back is printed. Re-running
+# `--upgrade-brain-key <title>` reads the saved material, so the title alone is enough to finish.
+# A DELETE that answers with an error may still have been applied, so the saved file is never
+# dropped on that answer: the key list says what happened. The file is used only for the org, repo
+# and title it was written for, and is dropped as soon as a writable key under that title exists
+# on GitHub by any path (recovery_forget, below) - a key revoked later must not come back from it.
 RECOVERY_DIR="${BRAIN_PROVISION_STATE:-$HOME/.serlino-brain-provision}"
 recovery_file(){ printf '%s/upgrade-%s.tsv' "$RECOVERY_DIR" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+recovery_forget(){ [ "$DRY_RUN" -eq 1 ] || rm -f "$(recovery_file "$1")"; }
 
 # Registers $2 (title) / $3 (key) writable on the Brain repo; one retry. Returns 0 on success.
 register_brain_key_writable(){
@@ -75,20 +80,37 @@ brain_key_reregister(){
   return 1
 }
 
+# $1 key id, $2 title, $3 public key. A DELETE error is ambiguous (the server may have deleted the key
+# and lost the answer), so the key list decides: title or key still there -> nothing was deleted,
+# report and keep the saved key; both gone -> carry on to the registration. A list that fails is
+# unknown, never "gone": the saved key stays and the printed way back works either way.
 upgrade_key_mutate(){
-  local rf; rf=$(recovery_file "$2")
-  mkdir -p "$RECOVERY_DIR" && printf '%s\t%s\n' "$2" "$3" > "$rf" \
+  local rf rows t k ro id gone=1; rf=$(recovery_file "$2")
+  mkdir -p "$RECOVERY_DIR" && printf '%s\t%s\t%s\t%s\n' "$BRAIN_ORG" "$MIRROR_REPO" "$2" "$3" > "$rf" \
     || { echo "refusing: could not save the recovery material in $RECOVERY_DIR; nothing was deleted" >&2; return 1; }
   echo "deleting read-only deploy key $1 ('$2') on $MIRROR_REPO, registering the same key again with write access (key saved in $rf first)"
-  "$GH" api -X DELETE "repos/$BRAIN_ORG/$MIRROR_REPO/keys/$1" >/dev/null || { rm -f "$rf"; return 1; }
+  if ! "$GH" api -X DELETE "repos/$BRAIN_ORG/$MIRROR_REPO/keys/$1" >/dev/null; then
+    echo "the delete answered with an error; asking GitHub whether it was applied anyway" >&2
+    if ! rows=$(gh_keys_rows "$MIRROR_REPO"); then
+      echo "could not tell. The saved key is kept in $rf; run './provision.sh --upgrade-brain-key '$2'' to finish or check." >&2
+      return 1
+    fi
+    while IFS=$'\t' read -r t k ro id; do
+      [ "$t" = "$2" ] || [ "$(awk '{print $1, $2}' <<<"$k")" = "$(awk '{print $1, $2}' <<<"$3")" ] && gone=0
+    done <<<"$rows"
+    if [ "$gone" -eq 0 ]; then
+      echo "the key is still registered; nothing was deleted. The saved key is kept in $rf." >&2
+      return 1
+    fi
+  fi
   brain_key_reregister "$2" "$3" "$rf"
 }
 upgrade_brain_key(){
-  local rows t k ro id rf saved_key
+  local rows t k ro id rf so sr st saved_key
   rows=$(gh_keys_rows "$MIRROR_REPO") || return 1
   while IFS=$'\t' read -r t k ro id; do
     [ "$t" = "$1" ] || continue
-    if [ "$ro" != true ]; then echo "already writable: '$1' on $MIRROR_REPO"; rm -f "$(recovery_file "$1")"; return 0; fi
+    if [ "$ro" != true ]; then echo "already writable: '$1' on $MIRROR_REPO"; recovery_forget "$1"; return 0; fi
     [ -n "$id" ] || { echo "refusing: no id for '$1' on $MIRROR_REPO" >&2; return 1; }
     if [ "$DRY_RUN" -eq 1 ]; then
       echo "would delete deploy key $id ('$1') on $MIRROR_REPO and register the same key again, read_only=false"
@@ -100,8 +122,8 @@ upgrade_brain_key(){
   # Not on GitHub. An earlier upgrade that failed after its delete left the key in the saved material.
   rf=$(recovery_file "$1")
   if [ -s "$rf" ]; then
-    IFS=$'\t' read -r t saved_key < "$rf"
-    if [ "$t" = "$1" ] && [[ "$saved_key" == ssh-ed25519\ * ]]; then
+    IFS=$'\t' read -r so sr st saved_key < "$rf"
+    if [ "$so" = "$BRAIN_ORG" ] && [ "$sr" = "$MIRROR_REPO" ] && [ "$st" = "$1" ] && [[ "$saved_key" == ssh-ed25519\ * ]]; then
       if [ "$DRY_RUN" -eq 1 ]; then echo "would register the saved key for '$1' on $MIRROR_REPO with write access (from $rf)"; return 0; fi
       echo "'$1' has no key on $MIRROR_REPO; finishing the interrupted upgrade from $rf"
       brain_key_reregister "$1" "$saved_key" "$rf"
@@ -166,6 +188,7 @@ register_key_check(){
     [ -n "$t" ] || continue
     material=$(awk '{print $1, $2}' <<<"$k")
     if [ "$t" = "$title" ]; then
+      [ "$repo" = "$MIRROR_REPO" ] && recovery_forget "$title"   # a key under this title exists: a saved one is stale
       if [ "$material" != "$key_material" ]; then
         echo "refusing: a deploy key titled '$title' already exists on $repo with a different key" >&2
         return 1
@@ -198,7 +221,10 @@ register_key_check(){
 register_key_mutate(){
   local repo="$1" title="$2" key="$3" want_ro="$4"
   echo "registering deploy key '$title' on $repo (read_only=$want_ro)"
-  "$GH" api "repos/$BRAIN_ORG/$repo/keys" -f title="$title" -f key="$key" -F "read_only=$want_ro" >/dev/null
+  "$GH" api "repos/$BRAIN_ORG/$repo/keys" -f title="$title" -f key="$key" -F "read_only=$want_ro" >/dev/null || return 1
+  # a writable Brain key now exists under this title, by whatever path: a saved one can only be stale
+  [ "$repo" = "$MIRROR_REPO" ] && [ "$want_ro" = false ] && recovery_forget "$title"
+  return 0
 }
 
 # AC-1a: only a DEFINITE 404 means "absent" - any other lookup failure (network, 5xx, auth)

@@ -26,6 +26,10 @@
 #                                        $STATE/key_post_count). MAX-1790: lets a test fail the
 #                                        re-registration that follows an upgrade's DELETE.
 #
+#   FAKE_GH_DELETE_FAIL=before|after   - a key DELETE exits 1 with "HTTP 500". "before" removes nothing;
+#                                        "after" removes the key first, like a server that applied the
+#                                        delete and lost the response (MAX-1790: the ambiguous case).
+#
 #   `api -X DELETE repos/ORG/REPO/keys/ID` removes the ID-th row of the repo's keys file; a keys
 #   listing's 4th column is that row number, which is the id.
 #
@@ -137,7 +141,9 @@ case "$cmd" in
         org=$(echo "$path" | cut -d/ -f2); repo=$(echo "$path" | cut -d/ -f3); id=$(echo "$path" | cut -d/ -f5)
         keyfile="$STATE/repos/${org}__${repo}.keys"
         [ "$method" = DELETE ] && [ -s "$keyfile" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+        [ "${FAKE_GH_DELETE_FAIL:-}" = before ] && { echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; }
         awk -v n="$id" 'NR!=n' "$keyfile" > "$keyfile.tmp" && mv "$keyfile.tmp" "$keyfile"
+        [ "${FAKE_GH_DELETE_FAIL:-}" = after ] && { echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; }
         exit 0
         ;;
       repos/*/*/contents/*)
