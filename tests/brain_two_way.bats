@@ -23,18 +23,20 @@ PROTECTED_PATHS=(AGENTS.md CLAUDE.md a/b/AGENTS.md notes/CLAUDE.local.md .claude
   .claude/rules/new.md .claude/new.md x/.claude/skills/s/SKILL.md .agents/y/z.md .agents method/README.md
   method/craft/scriptwriting.md audits/latest-weekly.md company/stock-status.md competitors/README.md
   voice-of-customer/corpus-profile.md voice-of-customer/phrase-bank-it.md voice-of-customer/phrase-bank-us.md
-  voice-of-customer/support-requests.md)
+  voice-of-customer/support-requests.md company/brand-profile.md methods/serlino-methods.md
+  running-notes/test-results.md)
 # MAX-1790: Macs mount case-insensitively, so these load as instructions / hit the same files.
 # GitHub's ruleset folds case too (verified 2026-10-09), so the engine does.
 CASE_VARIANT_PATHS=(claude.md notes/claude.md notes/Agents.md company/agents.md notes/Claude.Local.md
   .CLAUDE/skills/x/SKILL.md x/.Agents/y.md Method/x.md METHOD/README.md Audits/Latest-Weekly.md
-  Company/Stock-Status.md Voice-Of-Customer/Phrase-Bank-IT.md)
+  Company/Stock-Status.md Voice-Of-Customer/Phrase-Bank-IT.md Company/Brand-Profile.md
+  Methods/Serlino-Methods.md)
 OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x.md methods/x.md
   company/CLAUDE.md.bak voice-of-customer/phrase-bank-fr.md)
 
 # --- the rule itself -------------------------------------------------------------------------
 
-@test "the protected-path rule refuses the 18 ruleset paths and their case variants, and lets ordinary pages through" {
+@test "the protected-path rule refuses the ruleset paths and their case variants, and lets ordinary pages through" {
   source "$REPO_ROOT/lib/protected_paths.sh"
   local p
   for p in "${PROTECTED_PATHS[@]}" "${CASE_VARIANT_PATHS[@]}"; do brain_path_protected "$p" || { echo "should be protected: $p"; false; }; done
