@@ -87,22 +87,27 @@ instructions exactly like `CLAUDE.md`, `AGENTS.md` and `.claude/`. GitHub matche
 case-insensitively too (verified 2026-10-09 with a temporary write deploy key: all three were refused
 with `GH013` "File path is restricted" while an unprotected file was accepted), so no case-variant
 patterns are needed in the ruleset and the engine folds case for all four rules below, `method/` and
-the seven export files included. Before this, `company/agents.md` was silently never shared; it is now
+the export files included. Before this, `company/agents.md` was silently never shared; it is now
 a protected path: kept in `protected-edits`, with the attention line.
 
 - its name is `CLAUDE.md`, `CLAUDE.local.md` or `AGENTS.md`, at any depth;
 - any directory component is `.claude` or `.agents` (the `.agents` symlink to `.claude/skills` is protected as a path itself);
 - it is under top-level `method/`;
-- it is one of the seven files the nightly export owns: `audits/latest-weekly.md`,
+- it is one of the ten files the nightly export owns (every page with `managed_by: mediabuy`, the
+  `_DOCUMENTS` list in serlino-mediabuy's `scripts/export_company_brain.py`): `audits/latest-weekly.md`,
   `company/stock-status.md`, `competitors/README.md`, `voice-of-customer/corpus-profile.md`,
   `voice-of-customer/phrase-bank-it.md`, `voice-of-customer/phrase-bank-us.md`,
-  `voice-of-customer/support-requests.md`.
+  `voice-of-customer/support-requests.md`, `company/brand-profile.md`,
+  `methods/serlino-methods.md`, `running-notes/test-results.md`. The last three were missing until
+  2026-10-12, so a team edit to them was sent and then silently overwritten by the next export (the
+  workflow exports into a fresh clone, so the exporter's `CONFLICT` check never fires there). When
+  the exporter gains or drops a document, change this list and the ruleset with it.
 
 **The list lives in one place in the engine, `lib/protected_paths.sh`, and it must mean the same as
 the ruleset.** Change them together. An engine stricter than the ruleset is harmless; a ruleset stricter than
 the engine only costs the refusal path described below on every such change. Edit the arrays in that
 file, then run `tests/brain_two_way.bats`, which
-checks the 18 refused and the open paths against both the predicate and the `git add` pathspecs.
+checks the refused and the open paths against both the predicate and the `git add` pathspecs.
 
 ### The ruleset, before and after (2026-10-07 and 2026-10-09)
 
@@ -117,6 +122,9 @@ organisation admins and one integration (id 5001512), always. No branch conditio
   (including new files under `.claude/`, `.agents/` and `method/` and at depth) and accepted the two
   unprotected ones (`company/brand-rules.md`, `running-notes/max-1790-probe.md`). The reason for the
   extra patterns was not written down.
+- **Pending (2026-10-12):** add `company/brand-profile.md`, `methods/serlino-methods.md` and
+  `running-notes/test-results.md` to the ruleset. The engine already protects them (stricter than
+  the ruleset, so harmless meanwhile); until the ruleset has them, only the engine stops a Mac's edit.
 - **Earlier still:** classic branch protection on `main` ("push restricted to maxmon64, pull request
   required") was removed on 2026-10-07 when the ruleset went in. Its JSON was never saved, so only
   that one-line description of it survives; do not expect to restore it from a file.
