@@ -144,3 +144,29 @@ teardown() { brain_test_teardown; }
   ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle
   ! git -C "$TEAM" ls-files --error-unmatch .ds_store >/dev/null 2>&1
 }
+
+# Office (Word, Excel, PowerPoint) writes an owner/lock file named `~$<name>` beside every
+# document it has open, and deletes it on close. Tracked, it reaches every teammate while the
+# document is open and churns the tree on every open/close. It belongs to the one Mac.
+@test "Office lock files (~\$name), at the root and nested, are never tracked and leave the tree clean" {
+  mkdir -p "$TEAM/sub"
+  echo 'real doc' > "$TEAM/report.docx"
+  printf 'owner\0' > "$TEAM/~\$report.docx"
+  printf 'owner\0' > "$TEAM/sub/~\$budget.xlsx"
+  printf 'owner\0' > "$TEAM/sub/~\$DECK.PPTX"
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle
+  git -C "$TEAM" ls-files --error-unmatch report.docx >/dev/null   # the document itself syncs
+  if git -C "$TEAM" ls-files --error-unmatch "~\$report.docx" >/dev/null 2>&1; then false; fi
+  if git -C "$TEAM" ls-files --error-unmatch "sub/~\$budget.xlsx" >/dev/null 2>&1; then false; fi
+  if git -C "$TEAM" ls-files --error-unmatch "sub/~\$DECK.PPTX" >/dev/null 2>&1; then false; fi
+  [ -z "$(git -C "$TEAM" status --porcelain)" ]
+  [ -f "$TEAM/~\$report.docx" ]   # left on disk for Office
+}
+
+@test "an already-tracked Office lock file is untracked on the next cycle, file kept on disk" {
+  printf 'owner\0' > "$TEAM/~\$old.docx"
+  git -C "$TEAM" add -f "~\$old.docx"; git_commit "$TEAM" 'oops, tracked a lock file'
+  ONLINE_CHECK_REMOTE="$BRAIN_ROOT/origin-team.git" run_sync_cycle
+  if git -C "$TEAM" ls-files --error-unmatch "~\$old.docx" >/dev/null 2>&1; then false; fi
+  [ -f "$TEAM/~\$old.docx" ]
+}

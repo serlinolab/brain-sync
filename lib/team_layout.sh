@@ -75,7 +75,9 @@ team_add_exclude_pathspecs(){
 # excluding the directory itself, so this split only matters there). lib/sync.sh's
 # heal_local_junk_history and commit_local, and team_add_exclude_pathspecs above, all read
 # these SAME lists so none of them can drift from what is actually excluded.
-TEAM_OS_JUNK_FILE_PATTERNS=(.DS_Store '._*' 'Icon?' '*.icloud')
+# `~$*`: the owner/lock file Word, Excel and PowerPoint write beside every open document and
+# delete on close - tracked, it would reach the whole team while the document is open.
+TEAM_OS_JUNK_FILE_PATTERNS=(.DS_Store '._*' 'Icon?' '*.icloud' '~$*')
 TEAM_OS_JUNK_DIR_NAMES=(.AppleDouble .Spotlight-V100 .Trashes .fseventsd)
 
 # `.git/info/exclude` is per-clone and local-only - unlike a tracked .gitignore, a colleague's
