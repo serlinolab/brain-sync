@@ -10,6 +10,8 @@
 _BRAIN_WRITE_LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/protected_paths.sh
 source "$_BRAIN_WRITE_LIBDIR/protected_paths.sh"
+# shellcheck source=lib/mirror_links.sh
+source "$_BRAIN_WRITE_LIBDIR/mirror_links.sh"
 BRAIN_SIGNPOST="READ ME FIRST.txt"
 
 # 0 this key can push, 1 it is read-only, 2 cannot tell. A dry run still authenticates against
@@ -106,6 +108,7 @@ brain_keep_protected_edits(){
   for p in ${prot[@]+"${prot[@]}"}; do
     if git cat-file -e "HEAD:$p" 2>/dev/null; then
       git checkout -q HEAD -- "$p"
+      sanitize_mirror_links "$MIRROR" || return 1
     else
       git rm -q -f --cached --ignore-unmatch -- "$p" >/dev/null 2>&1
       rm -rf -- "$p"; rmdir -p "$(dirname "$p")" 2>/dev/null
@@ -123,6 +126,8 @@ commit_brain(){
     log "mirror origin does not match the expected remote; refusing to touch it"
     return 1
   fi
+  git -C "$MIRROR" config core.symlinks true || return 1
+  sanitize_mirror_links "$MIRROR" || { _brain_preserve_fail "Brain symlinks could not be secured"; return 3; }
   local rc=0
   chmod -R u+w "$MIRROR" 2>/dev/null || true
   cd "$MIRROR" || return 1
@@ -244,6 +249,7 @@ brain_push_hook(){
   git reset -q --soft origin/main || return 1
   for p in "${prot[@]}"; do
     if git cat-file -e "origin/main:$p" 2>/dev/null; then git checkout -q origin/main -- "$p"
+      sanitize_mirror_links "$MIRROR" || return 1
     else git rm -q -f --cached --ignore-unmatch -- "$p" >/dev/null 2>&1; rm -rf -- "$p"; fi
   done
   git diff --cached --quiet || _commit_as_person "notes $(date -u +%F' '%T)Z" || return 1
@@ -254,6 +260,8 @@ brain_push_hook(){
 # Writable mode of sync_mirror, right after its fetch.
 _sync_brain_two_way(){
   local CONFLICTS_DIR="$BRAIN_CONFLICTS" NOTE_PREFIX="Serlinolab_Brain/" rc=0
+  local BRAIN_SANITIZE_CHECKOUT="$MIRROR"
+  sanitize_mirror_links "$MIRROR" || return 1
   [ -e "$BRAIN_WRITABLE" ] || log "this Mac may now write to the Brain; the folder is editable"
   : > "$BRAIN_WRITABLE"
   chmod -R u+w "$MIRROR" 2>/dev/null || true   # protected paths were read-only; git must replace them
@@ -263,7 +271,8 @@ _sync_brain_two_way(){
   # Label "mirror", not "brain": brain-app's SyncStatus reads "mirror at <sha>" as the mirror step,
   # and an unknown line leaves every writable Mac yellow (2026-10-09). Keep in step with brain-app.
   _sync_after_fetch "$MIRROR" mirror "$BRAIN_CONFLICT_STATE" "$BRAIN_CONFLICT_PARK_SHAS" "$BRAIN_AUTOSTASH_STATE" brain_push_hook || rc=$?
-  company_readme writable
+  sanitize_mirror_links "$MIRROR" || return 1
+  company_readme writable || rc=1
   brain_lock_protected
   chmod a-w "$MIRROR/$BRAIN_SIGNPOST" 2>/dev/null
   return "$rc"

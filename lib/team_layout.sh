@@ -1,4 +1,6 @@
 #!/bin/bash
+# shellcheck source=lib/generated_files.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/generated_files.sh"
 # Single source of truth for the team/ sparse-checkout pattern (MAX-1515 review, Class A;
 # amended when Serlinolab_Brain/ moved beside team/, no longer nested inside it).
 # Sourced by setup.sh (the real install) and tests/helpers.bash (test doubles), so the
@@ -8,7 +10,7 @@
 # colleague's push can ever check out) and by lib/sync.sh's `git add` pathspec (what a
 # creator's own untracked file can ever be staged from) - one array, so the two exclusion
 # views can never drift apart (MAX-1515 fix 1).
-TEAM_INSTRUCTION_NAMES=(CLAUDE.md CLAUDE.local.md AGENTS.md .claude)
+TEAM_INSTRUCTION_NAMES=(CLAUDE.md CLAUDE.local.md AGENTS.md .claude .agents)
 
 # `!name` alone only excludes a FILE or SYMLINK named `name` - a colleague (or a local, never-
 # pulled file - MAX-1515 fix 4) can instead commit `name` as a DIRECTORY, with its own files
@@ -30,7 +32,7 @@ team_sparse_checkout_pattern(){
 write_team_sparse_checkout(){
   local team="$1"
   git -C "$team" sparse-checkout init --no-cone >/dev/null 2>&1 || return 1
-  team_sparse_checkout_pattern > "$team/.git/info/sparse-checkout" || return 1
+  write_generated_file "$team/.git/info/sparse-checkout" team_sparse_checkout_pattern || return 1
   git -C "$team" sparse-checkout reapply >/dev/null 2>&1 || return 1
 }
 
@@ -87,9 +89,8 @@ TEAM_OS_JUNK_DIR_NAMES=(.AppleDouble .Spotlight-V100 .Trashes .fseventsd)
 write_team_exclude(){
   local team="$1"
   mkdir -p "$team/.git/info" || return 1
-  local p
   # $2...: extra local-only lines (the Brain adds its generated signpost - MAX-1790).
-  { for p in "${TEAM_OS_JUNK_FILE_PATTERNS[@]}" "${TEAM_OS_JUNK_DIR_NAMES[@]}" "${@:2}"; do printf '%s\n' "$p"; done; } > "$team/.git/info/exclude"
+  write_generated_file "$team/.git/info/exclude" printf '%s\n' "${TEAM_OS_JUNK_FILE_PATTERNS[@]}" "${TEAM_OS_JUNK_DIR_NAMES[@]}" "${@:2}"
 }
 
 # Pathspecs for `git rm`/`git log`/`git diff` (porcelain plumbing, not the exclude file's

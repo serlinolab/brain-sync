@@ -1,4 +1,6 @@
 #!/bin/bash
+# shellcheck source=lib/generated_files.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/generated_files.sh"
 # Mirror sync, team sync, staleness, and the company README. Sourced by sync.sh.
 # shellcheck source=lib/brain_write.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brain_write.sh"
@@ -58,7 +60,7 @@ protect_readonly(){
 company_readme(){
   if [ "${1:-}" = writable ]; then
     # MAX-1790: this Mac may write to the Brain (see lib/brain_write.sh).
-    cat > "$MIRROR/$BRAIN_SIGNPOST" <<'TXT'
+    write_generated_file "$MIRROR/$BRAIN_SIGNPOST" cat <<'TXT'
 This folder is the company's shared knowledge. Save a change here and
 it reaches everyone within a few minutes; theirs reach you the same way.
 
@@ -68,7 +70,7 @@ change is not shared and your text is kept aside for you.
 TXT
     return
   fi
-  cat > "$MIRROR/$BRAIN_SIGNPOST" <<'TXT'
+  write_generated_file "$MIRROR/$BRAIN_SIGNPOST" cat <<'TXT'
 This folder is the company's shared knowledge. It updates on its own -
 you don't need to do anything to keep it current.
 
@@ -97,6 +99,9 @@ sync_mirror(){
     log "work in the Brain folder has no safe copy yet; not syncing the Brain this cycle"
     return 1
   fi
+  git -C "$MIRROR" config core.symlinks true || return 1
+  sanitize_mirror_links "$MIRROR" || { _brain_preserve_fail "Brain symlinks could not be secured"; return 1; }
+  git -C "$MIRROR" config core.hooksPath "$MIRROR/.git/hooks" || return 1
   local rc=0
   if ! git -C "$MIRROR" fetch --quiet origin; then
     log "mirror fetch failed"
@@ -122,6 +127,7 @@ sync_mirror(){
   rc=0
   chmod -R u+w "$MIRROR" 2>/dev/null || true   # git needs write only after the fetch
   git -C "$MIRROR" reset --hard --quiet origin/main || rc=1
+  sanitize_mirror_links "$MIRROR" || return 1
   [ "$rc" -eq 0 ] && git -C "$MIRROR" clean -ffdq || rc=1
   [ "$rc" -eq 0 ] && company_readme || rc=1
   protect_readonly "$MIRROR"
@@ -349,7 +355,11 @@ resolve_conflict_file(){
   if [ -z "$b2" ] || [ -z "$b3" ]; then
     # Case 5: modify/delete - never lose content, keep whichever side still has the file.
     mkdir -p "$(dirname "$path")"
-    if [ -n "$b2" ]; then git show ":2:$path" > "$path"; else git show ":3:$path" > "$path"; fi
+    if [ -n "$b2" ]; then
+      write_generated_file "$path" git show ":2:$path" || return 1
+    else
+      write_generated_file "$path" git show ":3:$path" || return 1
+    fi
     git add -- "$path" || return 1
     team_note "${NOTE_PREFIX:-}$path was removed on one side and changed on the other; the changed version was kept."
     return 0
@@ -364,8 +374,8 @@ resolve_conflict_file(){
   theirs_file=$(mktemp) || { rm -f "$base_file"; return 1; }
   if [ -n "$b1" ]; then git show ":1:$path" > "$base_file"; else : > "$base_file"; fi
   git show ":3:$path" > "$theirs_file"
-  git show ":2:$path" > "$path"
   mkdir -p "$(dirname "$path")"
+  write_generated_file "$path" git show ":2:$path" || { rm -f "$base_file" "$theirs_file"; return 1; }
   git merge-file --union "$path" "$base_file" "$theirs_file" >/dev/null 2>&1
   rm -f "$base_file" "$theirs_file"
   git add -- "$path" || return 1
@@ -386,9 +396,10 @@ _rebase_in_progress(){
 # too, so nothing is partially merged) and reports back to the caller, which parks exactly as
 # it did before this feature existed. Must be called with CWD already in $TEAM.
 auto_rebase_onto_origin(){
-  if git rebase --quiet --autostash origin/main 2>>"$LOG"; then
-    return 0
-  fi
+  local rebase_rc=0
+  git rebase --quiet --autostash origin/main 2>>"$LOG" || rebase_rc=$?
+  sanitize_brain_checkout || return 1
+  [ "$rebase_rc" -ne 0 ] || return 0
   _rebase_in_progress || return 1   # failed for a reason that isn't a conflict we can resolve
   while _rebase_in_progress; do
     local -a unmerged=()
@@ -405,9 +416,10 @@ auto_rebase_onto_origin(){
     # conflicting commit (exactly like the initial `git rebase` invocation above) - only
     # _rebase_in_progress tells the two apart. Treating any nonzero as fatal here would abandon
     # a multi-step rebase (case 6) the moment its second commit also conflicted.
-    if ! GIT_EDITOR=true EDITOR=true git rebase --continue >>"$LOG" 2>&1; then
-      _rebase_in_progress || return 1
-    fi
+    rebase_rc=0
+    GIT_EDITOR=true EDITOR=true git rebase --continue >>"$LOG" 2>&1 || rebase_rc=$?
+    sanitize_brain_checkout || return 1
+    if [ "$rebase_rc" -ne 0 ]; then _rebase_in_progress || return 1; fi
   done
   return 0
 }
@@ -466,6 +478,7 @@ _sync_after_fetch(){
   # 2026-09-24 incident: clean any junk-only local history, now bounded by the fresh
   # origin/main above.
   local healed; healed=$(heal_local_junk_history "$dir")
+  sanitize_brain_checkout || return 1
   local n
   n=$(cat "$conflict_state" 2>/dev/null || echo 0)
   local already_rebased=0
@@ -512,6 +525,7 @@ _sync_after_fetch(){
       # write a second copy-dir for one attempt if the two calls straddle a second boundary,
       # both violating "at most one new conflict-copy set per attempt".
       git rebase --abort 2>/dev/null || true
+      sanitize_brain_checkout || return 1
       echo "$origin_sha $local_sha" > "$park_shas"
       log "a park at the bound survives a fresh attempt - a genuine (binary) conflict remains; still not retrying until a human intervenes"
       return 3
@@ -527,6 +541,7 @@ _sync_after_fetch(){
       # See the comment above: auto_rebase_onto_origin already saved the incoming copy for
       # this attempt's unmerged files, so no second save_conflict_copies call here either.
       git rebase --abort 2>/dev/null || true
+      sanitize_brain_checkout || return 1
       echo $((n+1)) > "$conflict_state"
       log "CONFLICT parked (attempt $((n+1))/$MAX_CONFLICT_ATTEMPTS); local content retained"
       return 3

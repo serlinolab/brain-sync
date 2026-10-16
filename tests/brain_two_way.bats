@@ -164,10 +164,12 @@ OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x
   [ "$(git -C "$MIRROR" show --name-only --format= HEAD)" = "company/open.md" ]
 }
 
-@test "the .agents symlink is protected as a path: replacing it is undone" {
+@test "the tracked .agents symlink stays protected and restores as a working internal link" {
   rm -f "$MIRROR/.agents"; echo "not a link" > "$MIRROR/.agents"
   run_sync_cycle
   [ -L "$MIRROR/.agents" ]
+  [ "$(readlink "$MIRROR/.agents")" = .claude/skills ]
+  [ "$(cat "$MIRROR/.agents/s/SKILL.md")" = skill ]
   [ "$(origin ls-tree main .agents | cut -c1-6)" = 120000 ]
   [ -n "$(find "$STATE/protected-edits" -name .agents)" ]
 }
