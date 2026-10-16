@@ -3,7 +3,9 @@
 # SERLINO-BRAIN-SETUP line setup.sh printed. Uses the gh CLI only - no SSH key of
 # Max's own is needed, since deploy keys are registered through the GitHub API.
 #
-#   ./provision.sh [--dry-run] "SERLINO-BRAIN-SETUP person=alice machine=alices-mac mirror_key=ssh-ed25519 AAAA... brain-mirror-alices-mac team_key=ssh-ed25519 AAAA... brain-team-alice"
+#   pbpaste | ./provision.sh [--dry-run]
+#   ./provision.sh [--dry-run] < line.txt
+# The single-argument form remains supported for callers that already quote their data safely.
 #
 # MAX-1790: the Brain key is registered WITH write access (the Mac edits the Brain directly; the
 # GitHub push ruleset keeps protected paths out). A Mac provisioned earlier holds a read-only key:
@@ -20,21 +22,32 @@ TEAM_README_TEMPLATE="$SCRIPT_DIR/templates/team-repo-README.md"
 
 DRY_RUN=0
 LINE=""
+LINE_ARGUMENT=0
 UPGRADE_TITLE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --upgrade-brain-key) shift; UPGRADE_TITLE="${1:-}" ;;
-    *) LINE="$1" ;;
+    *) LINE="$1"; LINE_ARGUMENT=1 ;;
   esac
   shift
 done
-if [ -z "$LINE" ] && [ -z "$UPGRADE_TITLE" ]; then
-  echo "Usage: provision.sh [--dry-run] '<pasted SERLINO-BRAIN-SETUP line>' | --upgrade-brain-key '<existing key title>'" >&2
-  exit 1
-fi
-
 refuse(){ echo "Refusing: $*" >&2; exit 1; }
+
+if [ "$LINE_ARGUMENT" -eq 0 ] && [ -z "$UPGRADE_TITLE" ]; then
+  if [ -t 0 ]; then
+    printf 'Usage: pbpaste | ./provision.sh [--dry-run]\n       ./provision.sh [--dry-run] < line.txt\n' >&2
+    exit 1
+  fi
+  # read -r treats shell syntax as data. Accept EOF after the line as well as one final
+  # newline, but refuse a second line (even blank) before parsing or calling gh.
+  IFS= read -r LINE || [ -n "$LINE" ] || refuse "expected one SERLINO-BRAIN-SETUP line on stdin"
+  extra=""
+  if IFS= read -r extra || [ -n "$extra" ]; then
+    refuse "expected exactly one onboarding line"
+  fi
+fi
+LINE=${LINE%$'\r'}
 
 # MAX-1790: GitHub cannot flip read_only on an existing deploy key, so the upgrade deletes the
 # read-only key and registers the SAME public key again under the SAME title with write access.
@@ -144,6 +157,10 @@ upgrade_brain_key(){
 }
 
 if [ -z "$UPGRADE_TITLE" ]; then
+case "$LINE" in
+  *$'\n'*|*$'\r'*) refuse "expected exactly one onboarding line" ;;
+esac
+[[ "$LINE" == SERLINO-BRAIN-SETUP\ person=* ]] || refuse "expected a SERLINO-BRAIN-SETUP line"
 person=$(printf '%s' "$LINE" | sed -nE 's/.*person=([^ ]*) machine=.*/\1/p')
 machine=$(printf '%s' "$LINE" | sed -nE 's/.*machine=([^ ]*) mirror_key=.*/\1/p')
 mirror_key=$(printf '%s' "$LINE" | sed -nE 's/.*mirror_key=(.*) team_key=.*/\1/p')
@@ -153,6 +170,11 @@ team_key=$(printf '%s' "$LINE" | sed -nE 's/.*team_key=(.*)$/\1/p')
 [[ "$machine" =~ ^[a-zA-Z0-9._-]+$ ]] || refuse "not a valid machine name: '$machine'"
 [[ "$mirror_key" == ssh-ed25519\ * ]] || refuse "mirror_key does not look like an ssh-ed25519 public key"
 [[ "$team_key" == ssh-ed25519\ * ]] || refuse "team_key does not look like an ssh-ed25519 public key"
+# Setup emits simple ASCII comments. Also accept ordinary email-style comments and spaces;
+# shell metacharacters, quotes, tabs and control characters have no place in this protocol.
+key_pattern='^ssh-ed25519 [A-Za-z0-9+/]+={0,2}( [A-Za-z0-9._@+ -]+)?$'
+[[ "$mirror_key" =~ $key_pattern ]] || refuse "invalid mirror_key encoding or comment characters"
+[[ "$team_key" =~ $key_pattern ]] || refuse "invalid team_key encoding or comment characters"
 fi
 
 # AC-1: re-running is safe. Same title + same key -> success, nothing changes. Same title

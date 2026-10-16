@@ -1,4 +1,6 @@
 #!/bin/bash
+# shellcheck source=lib/generated_files.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/generated_files.sh"
 # AC-7: one place the secret patterns live. Used by commit_local (engine, unstages+logs+
 # marks, never blocks the rest of the cycle) and by the pre-commit/pre-push hooks setup.sh
 # installs into team/.git/hooks (hooks are not synced by git, so only local installation can
@@ -40,7 +42,7 @@ install_team_hooks(){
   local team="$1" libdir="$2"
   local hooks="$team/.git/hooks"
   mkdir -p "$hooks"
-  cat > "$hooks/pre-commit" <<'HOOK' || return 1
+  write_generated_file "$hooks/pre-commit" cat <<'HOOK' || return 1
 #!/bin/bash
 set -u
 if ! source "__LIBDIR__/secretscan.sh" 2>/dev/null; then
@@ -81,7 +83,7 @@ done < "$list_file"
 rm -f "$list_file"
 exit 0
 HOOK
-  cat > "$hooks/pre-push" <<'HOOK' || return 1
+  write_generated_file "$hooks/pre-push" cat <<'HOOK' || return 1
 #!/bin/bash
 set -u
 if ! source "__LIBDIR__/secretscan.sh" 2>/dev/null; then

@@ -72,6 +72,7 @@ make_fake_team_repo() {
   seed_repo "$BRAIN_ROOT/origin-team.git" "$TEAM" note.txt
   mkdir -p "$STATE/engine/lib"
   cp "$REPO_ROOT/lib/secretscan.sh" "$STATE/engine/lib/secretscan.sh"
+  cp "$REPO_ROOT/lib/generated_files.sh" "$STATE/engine/lib/generated_files.sh"
   git -C "$TEAM" config core.hooksPath "$TEAM/.git/hooks"
   git -C "$TEAM" config core.symlinks false
   configure_team_sparse_checkout
@@ -140,6 +141,7 @@ setup_second_team_clone() {
   mkdir -p "$STATE2/engine/lib"
   printf 'karl\n' > "$STATE2/person"
   cp "$REPO_ROOT/lib/secretscan.sh" "$STATE2/engine/lib/secretscan.sh"
+  cp "$REPO_ROOT/lib/generated_files.sh" "$STATE2/engine/lib/generated_files.sh"
   git clone -q "$BRAIN_ROOT/origin-team.git" "$TEAM2"
   git -C "$TEAM2" config core.hooksPath "$TEAM2/.git/hooks"
   git -C "$TEAM2" config core.symlinks false
@@ -175,6 +177,7 @@ make_writable_brain() {
   local tmp; tmp="$(mktemp -d)"
   mkdir -p "$ROOT" "$STATE/engine/lib"
   cp "$REPO_ROOT/lib/secretscan.sh" "$STATE/engine/lib/secretscan.sh"
+  cp "$REPO_ROOT/lib/generated_files.sh" "$STATE/engine/lib/generated_files.sh"
   git init -q --bare "$BRAIN_ROOT/origin-mirror.git"; git init -q -b main "$tmp"
   seed_brain_tree "$tmp"
   git -C "$tmp" add -A; git_commit "$tmp" init
@@ -191,6 +194,7 @@ setup_second_brain_mac() {
   mkdir -p "$STATE2/engine/lib"
   printf 'karl\n' > "$STATE2/person"
   cp "$REPO_ROOT/lib/secretscan.sh" "$STATE2/engine/lib/secretscan.sh"
+  cp "$REPO_ROOT/lib/generated_files.sh" "$STATE2/engine/lib/generated_files.sh"
   git clone -q "$BRAIN_ROOT/origin-mirror.git" "$ROOT2/Serlinolab_Brain"
   run_second_mac_sync_cycle
 }

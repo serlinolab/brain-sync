@@ -14,6 +14,8 @@ setup_setup_test() {
   mkdir -p "$work/lib" "$work/templates"
   cp "$REPO_ROOT/lib/launcher.sh" "$work/lib/launcher.sh"
   cp "$REPO_ROOT/lib/secretscan.sh" "$work/lib/secretscan.sh"
+  cp "$REPO_ROOT/lib/generated_files.sh" "$work/lib/generated_files.sh"
+  cp "$REPO_ROOT/lib/mirror_links.sh" "$work/lib/mirror_links.sh"
   cp "$REPO_ROOT/lib/team_layout.sh" "$work/lib/team_layout.sh"
   cp "$REPO_ROOT/lib/complete_setup.sh" "$work/lib/complete_setup.sh"
   # MAX-1515 review finding A: setup.sh now sources $ENGINE/lib/common.sh too, to take the
@@ -30,6 +32,9 @@ setup_setup_test() {
   cp "$REPO_ROOT/templates/team-repo-README.md" "$teamwork/README.md"
   git -C "$teamwork" add -A; git -C "$teamwork" -c user.name=fixture -c user.email=fixture@example.com commit -qm init
   git -C "$teamwork" remote add origin "$BRAIN_ROOT/repos/team.git"; git -C "$teamwork" push -q origin main
+  # The mirror now checks out main explicitly after pinning its configuration. Seed a
+  # real HEAD here too, as the company repository has in production.
+  git -C "$teamwork" push -q "$BRAIN_ROOT/repos/mirror.git" main
   rm -rf "$teamwork"
   # Rewrites the ssh:// alias URLs to local bare-repo paths going IN (so clone/fetch/push
   # work without real SSH), and rewrites them back to the alias going OUT of `remote
@@ -356,8 +361,7 @@ push_colleague_instructions_to_team_origin() {
 
   FAIL_SPARSE=1 BRAIN_ROOT="$HOME/Serlinolab" run bash "$REPO_ROOT/sync.sh"
   # Codex review of aea244e, blocking finding 1: team_online() (lib/sync.sh) now probes team/'s
-  # OWN remote independently of the mirror, so this fixture's genuinely-empty mirror.git (a
-  # scaffolding artifact, never a deliberate "offline" simulation) no longer masks sync_team
+  # OWN remote independently of the mirror, so the mirror no longer masks sync_team
   # actually being attempted here - it correctly runs and correctly skips (exit 2, "team folder
   # configuration is not complete"), which is a more honest signal than the old accidental 0.
   [ "$status" -eq 2 ]
@@ -397,7 +401,7 @@ push_colleague_instructions_to_team_origin() {
   # remote independently of the mirror now, so sync_team IS reached this cycle - but its very
   # first check (finding F1b, `setup_rc -eq 3`) returns immediately, before any git operation
   # on team/, giving the more honest exit 2 ("skip") instead of an exit 0 that used to depend
-  # on this fixture's unrelated, always-empty mirror.git happening to gate the whole cycle.
+  # on the mirror happening to gate the whole cycle.
   [ "$status" -eq 2 ]
 
   # never fetched/rebased, never staged/committed a colleague's push onto an unprotected team/
@@ -518,7 +522,7 @@ EOF
   # never actually configured (complete_setup's clone step reported failure to THIS attempt, so
   # it never reached the configure block) - team_online() now correctly finds team/'s own
   # remote reachable and lets sync_team run, which correctly refuses an unprotected team/ (exit
-  # 2), rather than exit 0 riding on this fixture's unrelated, always-empty mirror.git.
+  # 2), rather than exit 0 depending on the mirror being unavailable.
   [ "$status" -eq 2 ]
   [ -d "$HOME/Serlinolab/team/.git" ]
   [ "$(cd "$HOME/Serlinolab/team" && git remote get-url origin)" = 'git@brain-team:serlinolab/brain-team.git' ]

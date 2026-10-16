@@ -18,6 +18,8 @@ _COMPLETE_SETUP_LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_COMPLETE_SETUP_LIBDIR/team_layout.sh"
 # shellcheck source=lib/secretscan.sh
 source "$_COMPLETE_SETUP_LIBDIR/secretscan.sh"
+# shellcheck source=lib/mirror_links.sh
+source "$_COMPLETE_SETUP_LIBDIR/mirror_links.sh"
 
 EXPECTED_TEAM_REMOTE="${EXPECTED_TEAM_REMOTE:-git@brain-team:serlinolab/brain-team.git}"
 EXPECTED_MIRROR_REMOTE="${EXPECTED_MIRROR_REMOTE:-git@brain-mirror:serlinolab/Serlinolab-Brain.git}"
@@ -109,7 +111,7 @@ _team_forbidden_files_present(){
 _team_hooks_match(){
   local team="$1" libdir="$STATE/engine/lib" tmp rc=0
   tmp=$(mktemp -d) || return 1
-  mkdir -p "$tmp/.git"
+  git init -q "$tmp" || { rm -rf "$tmp"; return 1; }
   install_team_hooks "$tmp" "$libdir" >/dev/null 2>&1 || { rm -rf "$tmp"; return 1; }
   cmp -s "$team/.git/hooks/pre-commit" "$tmp/.git/hooks/pre-commit" || rc=1
   [ "$rc" -eq 0 ] && { cmp -s "$team/.git/hooks/pre-push" "$tmp/.git/hooks/pre-push" || rc=1; }
@@ -117,14 +119,15 @@ _team_hooks_match(){
   return "$rc"
 }
 
-# Lighter sibling for the read-only mirror: complete_setup does no further configuration on it
-# beyond the clone itself (no sparse-checkout, no hooks) - sync_mirror's own protect_readonly
-# is what guards it, re-applied every cycle regardless of this check.
+# Lighter sibling for the mirror: no sparse-checkout. Checkout uses the same trusted hooks
+# directory as team/. Internal symlinks stay usable; unsafe ones are removed after checkout.
 mirror_is_ready(){
   local mirror="${1:-$ROOT/Serlinolab_Brain}"
   [ -L "$mirror" ] && return 1
   [ -d "$mirror/.git" ] || return 1
-  remote_matches "$mirror" "$EXPECTED_MIRROR_REMOTE"
+  remote_matches "$mirror" "$EXPECTED_MIRROR_REMOTE" || return 1
+  [ "$(git -C "$mirror" config core.hooksPath 2>/dev/null)" = "$mirror/.git/hooks" ] || return 1
+  [ "$(git -C "$mirror" config --bool core.symlinks 2>/dev/null)" = true ]
 }
 
 # Finishes team/ and Serlinolab_Brain/ against $ROOT/.state (STATE) - both must already be set by the
@@ -132,7 +135,7 @@ mirror_is_ready(){
 #
 # Returns: 0 fully complete (freshly finished this call, or already was - a no-op that changes
 #            nothing on disk and clones nothing);
-#          1 pending (a clone could not connect yet, e.g. the deploy key is not registered -
+#          1 pending (a clone could not connect yet, or mirror configuration failed -
 #            retry silently on the next call, nothing else in the caller should be blocked);
 #          2 refused (an existing team/ or Serlinolab_Brain/ has a foreign origin - never adopted,
 #            never cloned over; the caller's own attention-marker logic already surfaces this);
@@ -140,7 +143,7 @@ mirror_is_ready(){
 #            clone is removed, never left half-configured on disk.
 complete_setup() {
   local team="$ROOT/team" mirror="$ROOT/Serlinolab_Brain"
-  local team_ready=0 team_needs_checkout=0
+  local team_ready=0 team_needs_checkout=0 mirror_needs_checkout=0
 
   # MAX-1515 review, "also check": a dangling symlink at team/ is `-e` false but `-L` true - an
   # `-e`-only check below would read it as "nothing here yet" and clone straight through it.
@@ -245,11 +248,23 @@ complete_setup() {
     if [ ! -L "$mirror" ] && mkdir "$mirror" 2>/dev/null; then
       mirror_owned=1
     fi
-    if ! { [ "$mirror_owned" -eq 1 ] && git clone --quiet "$EXPECTED_MIRROR_REMOTE" "$mirror"; }; then
+    if ! { [ "$mirror_owned" -eq 1 ] && git clone --quiet --no-checkout -c core.hooksPath="$mirror/.git/hooks" -c core.symlinks=true \
+         "$EXPECTED_MIRROR_REMOTE" "$mirror"; }; then
       [ "$mirror_owned" -eq 1 ] && rmdir "$mirror" 2>/dev/null
       echo "Mirror clone pending - it will complete once Max has registered your key." >&2
       return 1
     fi
+    mirror_needs_checkout=1
+  fi
+
+  # Use trusted hooks and real symlinks; sanitize before any generated-file writes.
+  if ! git -C "$mirror" config core.hooksPath "$mirror/.git/hooks" \
+     || ! git -C "$mirror" config core.symlinks true \
+     || { [ "$mirror_needs_checkout" -eq 1 ] && ! git -C "$mirror" checkout --quiet main; } \
+     || ! sanitize_mirror_links "$mirror"; then
+    [ "$mirror_needs_checkout" -eq 1 ] && rm -rf "$mirror"
+    echo "Mirror configuration pending - it will complete on a later run." >&2
+    return 1
   fi
 
   date -u +%FT%TZ > "$STATE/setup-complete"

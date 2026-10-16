@@ -570,3 +570,80 @@ two_alice_keys() {   # two deploy keys under one title: a different read-only ke
   awk -F'\t' -v t="$T_ALICE" '$1==t && $2 ~ /^ssh-ed25519 AAAAmirror/ && $3=="false"{f=1} END{exit !f}' "$(BRAIN_KEYS)"   # ours is back, writable
   [ -z "$(ls -A "$BRAIN_PROVISION_STATE" 2>/dev/null)" ]
 }
+
+provision_stdin() { bash "$REPO_ROOT/provision.sh" "$@" < "$BRAIN_ROOT/onboarding.txt"; }
+
+@test "F3 interactive stdin without an argument prints usage without waiting" {
+  run python3 - "$REPO_ROOT/provision.sh" <<'PY'
+import os
+import pty
+import subprocess
+import sys
+
+master, slave = pty.openpty()
+try:
+    result = subprocess.run(["bash", sys.argv[1]], stdin=slave,
+                            capture_output=True, text=True, timeout=5)
+    assert result.returncode == 1, result
+    assert "Usage: pbpaste | ./provision.sh" in result.stderr, result
+finally:
+    os.close(slave)
+    os.close(master)
+PY
+  [ "$status" -eq 0 ]
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team" ]
+}
+
+@test "F3 onboarding accepts a trailing CR from stdin or a quoted argument" {
+  printf '%s\r\n' "$LINE" > "$BRAIN_ROOT/onboarding.txt"
+  run provision_stdin
+  [ "$status" -eq 0 ]
+  run bash "$REPO_ROOT/provision.sh" "$LINE"$'\r'
+  [ "$status" -eq 0 ]
+  [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
+  [ "$(key_line_count "$BRAIN_ORG/brain-team")" = 1 ]
+}
+
+@test "F3 stdin onboarding supports file input with and without a final newline" {
+  printf '%s' "$LINE" > "$BRAIN_ROOT/onboarding.txt"
+  run provision_stdin --dry-run
+  [ "$status" -eq 0 ]
+  [ ! -e "$FAKE_GH_STATE/repos/${BRAIN_ORG}__brain-team" ]
+  printf '%s\n' "$LINE" > "$BRAIN_ROOT/onboarding.txt"
+  run provision_stdin
+  [ "$status" -eq 0 ]
+  [ "$(key_line_count "$BRAIN_ORG/Serlinolab-Brain")" = 1 ]
+  [ "$(key_line_count "$BRAIN_ORG/brain-team")" = 1 ]
+}
+
+@test "F3 stdin shell syntax in either key comment stays inert and is refused before gh" {
+  local comment which bad
+  GH="$BRAIN_ROOT/gh-spy"; export GH
+  printf '#!/bin/bash\ntouch "$FAKE_GH_STATE/calls"\nexit 1\n' > "$GH"
+  chmod +x "$GH"
+  # Single quotes keep the test's own shell from interpreting these payloads.
+  for comment in '$(touch "$BRAIN_ROOT/executed")' '`touch "$BRAIN_ROOT/executed"`' 'bad"quote' "bad'quote" $'bad\ncomment'; do
+    for which in brain-mirror-alices-mac brain-team-alice; do
+      bad=${LINE/$which/$comment}
+      printf '%s\n' "$bad" > "$BRAIN_ROOT/onboarding.txt"
+      run provision_stdin
+      [ "$status" -ne 0 ]
+      printf '%s' "$output" | grep -qi 'Refusing:'
+      [ ! -e "$BRAIN_ROOT/executed" ]
+      [ ! -e "$FAKE_GH_STATE/calls" ]
+      [ "$(ls -A "$FAKE_GH_STATE/repos")" = "${BRAIN_ORG}__Serlinolab-Brain" ]
+    done
+  done
+}
+
+@test "F3 stdin refuses extra lines even after a valid onboarding line" {
+  GH="$BRAIN_ROOT/gh-spy"; export GH
+  printf '#!/bin/bash\ntouch "$FAKE_GH_STATE/calls"\nexit 1\n' > "$GH"
+  chmod +x "$GH"
+  printf '%s\n%s\n' "$LINE" '$(touch "$BRAIN_ROOT/executed")' > "$BRAIN_ROOT/onboarding.txt"
+  run provision_stdin
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qi 'Refusing:'
+  [ ! -e "$BRAIN_ROOT/executed" ]
+  [ ! -e "$FAKE_GH_STATE/calls" ]
+}

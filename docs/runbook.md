@@ -16,14 +16,19 @@ Check the result with `./fleet-status.sh`.
    because the sign-in must be their own.
 1. The creator runs `setup.sh` on their Mac (see README.md). It ends by printing one line
    starting with `SERLINO-BRAIN-SETUP` and asks them to send it to you.
-2. Paste that whole line as the argument to `provision.sh`, from a Mac with the `gh` CLI
+2. Copy that whole line to the clipboard, then run this from a Mac with the `gh` CLI
    signed in to an account that can administer the `serlinolab` org:
 
    ```
-   ./provision.sh "SERLINO-BRAIN-SETUP person=alice machine=alices-mac mirror_key=ssh-ed25519 AAAA... brain-mirror-alices-mac team_key=ssh-ed25519 AAAA... brain-team-alice"
+   pbpaste | ./provision.sh
    ```
 
-   Add `--dry-run` first if you want to see what it would do without changing anything.
+   To preview without changing anything, use `pbpaste | ./provision.sh --dry-run`.
+   If the line is saved in a text file, use `./provision.sh < line.txt`.
+   Pass only one line. Do not paste it into a shell command, even inside double quotes:
+   command substitutions in a key comment would run before the script can validate it.
+   The argument form remains supported for existing callers that safely quote their data.
+   Key comments may contain ASCII letters, digits, spaces, `.`, `_`, `@`, `+` and `-`.
 3. `provision.sh` creates `serlinolab/brain-team` (private) the first time it's ever run, and
    registers two GitHub deploy keys for that person+Mac, both read-write: one on
    `Serlinolab-Brain` (since MAX-1790; it used to be read-only - see "Editing the Brain directly")
