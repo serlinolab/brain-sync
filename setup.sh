@@ -1,6 +1,12 @@
 #!/bin/bash
-# Serlino Brain - one-time Mac setup. Paste-and-run:
-#   curl -fsSL https://raw.githubusercontent.com/serlinolab/brain-sync/main/setup.sh | bash
+# Serlino Brain - one-time Mac setup. Use Max's published commit ID and SHA256:
+# setup_dir=$(mktemp -d) && (
+#   cd "$setup_dir" &&
+#   curl -fsSLo setup.sh 'https://raw.githubusercontent.com/serlinolab/brain-sync/<REVIEWED_COMMIT_ID>/setup.sh' &&
+#   printf '%s  setup.sh\n' '<SHA256_PUBLISHED_BY_MAX>' | shasum -a 256 -c - &&
+#   bash setup.sh
+# )
+# An immutable URL plus an independently published checksum protects the installer and its pin.
 set -u
 ROOT="$HOME/Serlinolab"; STATE="$ROOT/.state"; ENGINE="$STATE/engine"
 DONE_MARK="$STATE/setup-complete"
@@ -57,7 +63,7 @@ PERSON="${BRAIN_PERSON:-}"
 if [ -z "$PERSON" ]; then
   if [ -t 1 ]; then
     # `read -p` sends its prompt to stderr, not the terminal it reads from - piped through
-    # `curl | bash` (README's own paste-and-run line) stderr can be silently swallowed, so the
+    # a piped setup invocation stderr can be silently swallowed, so the
     # prompt never appeared and the terminal looked frozen (hit live by Max). Print the question
     # to /dev/tty ourselves, then read the answer from /dev/tty with no prompt of read's own.
     printf 'Your first name (it signs the notes you share in team/): ' > /dev/tty
@@ -77,15 +83,188 @@ elif [ "$(cat "$STATE/person" 2>/dev/null)" != "$PERSON_SLUG" ]; then
   exit 1
 fi
 
+# --- signed trust: identical in setup.sh and lib/launcher.sh; never source from a fetched tree.
+# Pin the dedicated release key in BOTH entry points before shipping. No environment override.
+# Bootstrap accepts only ssh-ed25519 keys (including both keys during a rotation bridge).
+BOOTSTRAP_SIGNER_FINGERPRINT='REPLACE_WITH_MAX_SSH_SHA256_FINGERPRINT'
+export GIT_NO_REPLACE_OBJECTS=1
+TRUST_DIR="$STATE/update-trust"
+SIGNERS="$TRUST_DIR/allowed_signers"
+trust_private(){
+  [ ! -L "$1" ] && [ -O "$1" ] || return 1
+  local mode
+  mode=$(stat -f %Lp "$1" 2>/dev/null) || return 1
+  [ "$mode" = "$2" ]
+}
+trust_verify(){
+  # Git selects a verifier from the signature header, regardless of gpg.format.
+  # Inspect only object headers (never a lookalike in the commit message).
+  git -C "$ENGINE" cat-file commit "$2" 2>/dev/null | awk '
+    /^$/ { exit }
+    /^gpgsig(-sha256)? / {
+      found++
+      if ($0 !~ /^gpgsig(-sha256)? -----BEGIN SSH SIGNATURE-----$/) bad=1
+    }
+    END { exit !(found > 0 && !bad) }
+  ' || return 1
+  git -C "$ENGINE" -c gpg.format=ssh -c gpg.ssh.program=ssh-keygen \
+    -c gpg.program=false -c gpg.x509.program=false \
+    -c gpg.ssh.allowedSignersFile="$1" -c gpg.ssh.revocationFile=/dev/null \
+    verify-commit "$2" >/dev/null 2>&1
+}
+trust_sha(){
+  case "$1" in ''|*[!0-9a-f]*) return 1 ;; esac
+  [ "${#1}" -eq 40 ] || [ "${#1}" -eq 64 ]
+}
+trust_anchor(){ sed -n 's/^# signed-anchor: //p' "$SIGNERS"; }
+trust_check(){
+  trust_private "$TRUST_DIR" 700 && trust_private "$SIGNERS" 600 || return 1
+  local anchor; anchor=$(trust_anchor)
+  trust_sha "$anchor" && trust_sha "$1" || return 1
+  git -C "$ENGINE" merge-base --is-ancestor "$anchor" "$1" || return 1
+  trust_verify "$SIGNERS" "$1"
+}
+trust_write(){
+  # Caller has already authenticated this object with the OLD list. Commit + list are one
+  # atomic file, so interruption cannot lower the anchor or leave a half-written rotation.
+  local sha="$1" list="$2" tmp
+  tmp=$(mktemp "$TRUST_DIR/.signers.XXXXXX") || return 1
+  { printf '# signed-anchor: %s\n' "$sha"; sed '/^# signed-anchor:/d' "$list"; } > "$tmp" &&
+    chmod 600 "$tmp" && mv -f "$tmp" "$SIGNERS" && return 0
+  rm -f "$tmp"; return 1
+}
+trust_bootstrap(){
+  local sha="$1" tmp pub fingerprint count keys
+  # An existing directory, even broken/empty, is NEVER permission to re-pin from the repo.
+  if [ -e "$TRUST_DIR" ] || [ -L "$TRUST_DIR" ]; then trust_check "$sha"; return; fi
+  trust_sha "$sha" || return 1
+  tmp=$(mktemp -d "$STATE/.trust-bootstrap.XXXXXX") || return 1
+  git -C "$ENGINE" show "$sha:config/allowed_signers" > "$tmp/list" || { rm -rf "$tmp"; return 1; }
+  # Accept a one-key list or two-key bridge, but authenticate with ONLY the pinned
+  # key. Merely including that public key must not authorize an attacker's signature.
+  count=$(grep -cv '^[[:space:]]*\(#\|$\)' "$tmp/list")
+  sed -n 's/^brain-sync namespaces="git" \(ssh-ed25519 [A-Za-z0-9+/=]*\)$/\1/p' "$tmp/list" > "$tmp/keys"
+  keys=$(wc -l < "$tmp/keys" | tr -d ' ')
+  if { [ "$count" != 1 ] && [ "$count" != 2 ]; } || [ "$keys" != "$count" ]; then
+    rm -rf "$tmp"; return 1
+  fi
+  : > "$tmp/pinned"
+  while IFS= read -r pub; do
+    printf '%s\n' "$pub" > "$tmp/key.pub"
+    fingerprint=$(ssh-keygen -lf "$tmp/key.pub" -E sha256 2>/dev/null | awk '{print $2}')
+    [ -n "$fingerprint" ] || { rm -rf "$tmp"; return 1; }
+    if [ "$fingerprint" = "$BOOTSTRAP_SIGNER_FINGERPRINT" ]; then
+      printf 'brain-sync namespaces="git" %s\n' "$pub" >> "$tmp/pinned"
+    fi
+  done < "$tmp/keys"
+  if ! trust_verify "$tmp/pinned" "$sha"; then rm -rf "$tmp"; return 1; fi
+  # A fetched bootstrap candidate is first checked without installing trust, then
+  # selfchecked. A failed initial selfcheck leaves the existing legacy path retryable.
+  if [ "${2:-}" = check ]; then rm -rf "$tmp"; return 0; fi
+  { printf '# signed-anchor: %s\n' "$sha"; cat "$tmp/list"; } > "$tmp/allowed_signers"
+  chmod 600 "$tmp/allowed_signers"
+  rm -f "$tmp/list" "$tmp/key.pub" "$tmp/keys" "$tmp/pinned"
+  mv "$tmp" "$TRUST_DIR"
+}
+trust_advance(){ trust_write "$1" "$SIGNERS"; }
+trust_rotate(){
+  local tmp; tmp=$(mktemp "$TRUST_DIR/.rotation.XXXXXX") || return 1
+  # Only a signed object's list is eligible; malformed/empty lists cannot strand the Mac.
+  git -C "$ENGINE" show "$1:config/allowed_signers" > "$tmp" &&
+    trust_verify "$tmp" "$1" && trust_write "$1" "$tmp"
+  local rc=$?; rm -f "$tmp"; return "$rc"
+}
+# --- end signed trust
+
 echo "Fetching the sync engine..."
+# Serialize with the installed launcher while authenticating/replacing the engine.
+LOCK="$STATE/run.lock"; LOG="$STATE/sync.log"
+log(){ printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$LOG"; }
+# --- lock: IDENTICAL COPY in lib/common.sh and lib/launcher.sh (tests assert byte equality).
+# The launcher must not source engine files, or a broken update could take down its own
+# rollback, so this is duplicated on purpose rather than shared.
+#
+# A cycle runs every 300s and takes seconds, so SKIPPING one is harmless while running two at
+# once is not. Every ambiguity below therefore fails closed.
+#
+# Staleness is decided by AGE, never by a pid. Three rounds of review broke the pid version,
+# each time differently, and both remaining failures were structural: the pid file cannot be
+# written atomically with the mkdir that creates the lock, so a crash in between left a lock
+# nobody could ever break (the Mac stops syncing forever, silently), and a pid reused after a
+# reboot made a stranger look like the owner. Neither is reachable without consulting pids.
+LOCK_STALE_SECONDS="${LOCK_STALE_SECONDS:-1800}"
+
+_lock_age_seconds(){
+  local t; t=$(stat -f %m "$1" 2>/dev/null) || return 1
+  echo $(( $(date +%s) - t ))
+}
+
+acquire_lock(){
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    local age; age=$(_lock_age_seconds "$LOCK") || return 1
+    # Two checks, and they are not redundant even though removing this one keeps every test
+    # green and every probe clean (measured: 6 runs, 3 contenders against a live holder, 0
+    # intruders either way). The SAFETY property is the seized-age re-check below. This one
+    # narrows the window: without it every contender moves the live lock aside and puts it
+    # back, so $LOCK briefly does not exist on each attempt. Keep both; do not "simplify".
+    [ "$age" -ge "$LOCK_STALE_SECONDS" ] || return 1
+    local seized="$LOCK.dead.$$"
+    mv "$LOCK" "$seized" 2>/dev/null || return 1
+    # Only one contender can win that rename, but it was judged BEFORE the rename: if another
+    # contender took over in between we have just seized a live lock. Detect it by the age of
+    # what we actually got, put it back, and give up. The exposure is the microseconds between
+    # the two calls, and we never proceed.
+    local got; got=$(_lock_age_seconds "$seized")
+    if [ -z "$got" ] || [ "$got" -lt "$LOCK_STALE_SECONDS" ]; then
+      mv "$seized" "$LOCK" 2>/dev/null || rm -rf "$seized"
+      return 1
+    fi
+    log "broke a lock abandoned ${got}s ago"
+    rm -rf "$seized"
+    mkdir "$LOCK" 2>/dev/null || return 1
+  fi
+  printf '%s\n' "$$" > "$LOCK/pid"   # informational for an operator reading the folder; never arbitration
+  # shellcheck disable=SC2329  # invoked indirectly by trap
+  cleanup_lock(){
+    [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK"
+    return 0
+  }
+  trap 'cleanup_lock' EXIT
+  trap 'cleanup_lock; exit 130' INT
+  trap 'cleanup_lock; exit 143' TERM
+  return 0
+}
+acquire_lock || { echo "Sync is running; retry setup shortly." >&2; exit 1; }
 if [ -d "$ENGINE/.git" ]; then
-  git -C "$ENGINE" pull --quiet origin main || { echo "Sync engine update pending." >&2; setup_ok=0; }
+  git -C "$ENGINE" fetch --quiet origin main || exit 1
 elif [ -e "$ENGINE" ]; then
-  echo "Sync engine destination exists but is not a usable git repo: $ENGINE" >&2
-  setup_ok=0
+  echo "Sync engine destination is not a usable git repo: $ENGINE" >&2; exit 1
 else
-  git clone --quiet "$BRAIN_SYNC_REMOTE" "$ENGINE" || { echo "Could not reach brain-sync. Check your internet connection and try again." >&2; setup_ok=0; }
+  git clone --no-checkout --quiet "$BRAIN_SYNC_REMOTE" "$ENGINE" || exit 1
+  git -C "$ENGINE" fetch --quiet origin main || exit 1
 fi
+candidate=$(git -C "$ENGINE" rev-parse 'FETCH_HEAD^{commit}') || exit 1
+if ! trust_bootstrap "$candidate" || ! trust_advance "$candidate"; then
+  echo "Sync engine signature, bootstrap pin or ancestry rejected; nothing from it was run." >&2
+  exit 1
+fi
+git -C "$ENGINE" -c core.hooksPath=/dev/null reset --quiet --hard "$candidate" &&
+  git -C "$ENGINE" clean -ffdqx || exit 1
+if ! bash "$ENGINE/sync.sh" --selfcheck; then
+  previous=$(cat "$STATE/engine-verified" 2>/dev/null || echo "")
+  if trust_sha "$previous" && trust_verify "$SIGNERS" "$previous" &&
+     git -C "$ENGINE" merge-base --is-ancestor "$previous" "$candidate"; then
+    git -C "$ENGINE" -c core.hooksPath=/dev/null reset --quiet --hard "$previous"
+    git -C "$ENGINE" clean -ffdqx
+  fi
+  echo "Signed engine failed selfcheck; setup stopped." >&2
+  exit 1
+fi
+tmp=$(mktemp "$STATE/.engine-verified.XXXXXX") || exit 1
+printf '%s\n' "$candidate" > "$tmp" && mv -f "$tmp" "$STATE/engine-verified" || exit 1
+trust_rotate "$candidate" || { echo "Invalid signed key rotation." >&2; exit 1; }
+cleanup_lock
+trap - EXIT INT TERM
 TEMPLATES="$ENGINE/templates"
 
 echo "Generating your keys (they never leave this Mac)..."

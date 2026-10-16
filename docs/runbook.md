@@ -2,13 +2,13 @@
 
 ## Provisioning a new person or Mac
 
-**Which way to onboard (2026-10-03):** the `curl | bash` line below. The SerlinoLab Brain
-menu-bar app then arrives on its own within a few minutes (the engine installs it), so there is
-nothing else to send. The DMG on Slack (brain-app `scripts/build-dmg.sh`) saves the one Terminal
-paste (its wizard runs the same setup.sh) but adds an "Open Anyway" step in Privacy & Security
-that needs an admin user: use it only for someone who won't use Terminal. Once the app is
-notarized (MAX-1638) the DMG becomes the simpler way. The app needs macOS 14; on an older Mac the
-engine skips it and keeps building the old Desktop launcher.
+**Which way to onboard:** use the immutable commit URL and independently published SHA256
+command in [README.md](../README.md). Max supplies both placeholder values after reviewing the
+release. The menu-bar app then arrives through the signed engine update. Existing DMG onboarding
+still uses a vendored installer that pulls/sources unsigned main; re-vendoring and a new DMG are
+tracked in [signed updates](signed-updates.md#follow-up-outside-this-change). Use the verified
+installer until that follow-up lands. The app needs macOS 14; on an older Mac the engine skips
+it and keeps building the old Desktop launcher.
 Check the result with `./fleet-status.sh`.
 
 0. Before the person sets up, create their MediaBuy user in MediaBuy admin. They sign in to
@@ -273,19 +273,43 @@ the assistant to name the brand. It should answer using whatever is in
 `lib/menubar_app.sh` installs, updates and keeps running the menu-bar app (MAX-1629, code in
 `serlinolab/brain-app`) from `app/` in this repo. It reaches every Mac with the engine's own git
 self-update, so no browser download is involved: no quarantine, no Gatekeeper prompt, and no trust
-root beyond protected `main` here.
+root beyond the allowed SSH signature on the engine commit; `app/SHA256` is trusted only
+because that commit is signed. See [signed updates and fleet rollout](signed-updates.md).
 
 - **Ship a new version:** in brain-app, bump `VERSION`, then `scripts/publish-to-engine.sh ../brain-sync`
-  and open a pull request here with the three changed files in `app/`. After merge, each Mac installs
-  it within one or two cycles. The engine installs only when `app/VERSION` differs from the installed
+  and open a pull request here with the three changed files in `app/`. Merge that PR locally using
+  the release procedure below; never use the GitHub merge button. After publishing the main tip
+  signed with the dedicated release key, each Mac installs it within one or two cycles. The engine installs only when `app/VERSION` differs from the installed
   copy's version, and only after `app/SHA256`, the bundle signature and the bundle's own version all check out.
 - **Where it goes:** a copy already in `/Applications` (dragged from the DMG) is updated in place;
   otherwise `~/Applications`. Never two copies.
 - **Kept running, and back after every restart:** the sync job runs at login (`RunAtLoad`), and each
   cycle starts the app when it isn't running - unless the person quit it from its menu since the
   last boot (`~/Serlinolab/.state/app-quit`; a quit lasts until the next restart).
-- **A brand-new Mac** still needs the app or `curl | bash` first, because the engine isn't there yet:
-  send the DMG (brain-app `scripts/build-dmg.sh`) on Slack, not by email (Gmail blocks `.dmg`).
-  That one copy must be unblocked once: System Settings → Privacy & Security → Open Anyway.
+- **A brand-new Mac** needs the immutable checksum-checked installer first; see the onboarding
+  instructions above and the pending DMG re-vendor follow-up.
 - **Stop distributing it:** delete `app/` here; installed copies stay, nothing new is installed.
 
+## Publishing an engine release
+
+The dedicated release key signs **only reviewed release tips**. It is separate from Max's
+ordinary commit-signing key and access/deploy keys; never enable global `commit.gpgsign` for it.
+Never use the GitHub merge button in brain-sync: its web merge signature is rejected by Macs.
+After reviewing the PR's final diff, use a clean checkout:
+
+```sh
+git fetch && git checkout main && git merge --ff-only origin/main
+git -c gpg.format=ssh -c user.signingkey="$HOME/.ssh/brain_sync_release_ed25519" \
+  merge --no-ff -S <reviewed-branch>
+git -c gpg.format=ssh -c gpg.program=false -c gpg.x509.program=false \
+  -c gpg.ssh.program=ssh-keygen -c gpg.ssh.allowedSignersFile=config/allowed_signers \
+  -c gpg.ssh.revocationFile=/dev/null verify-commit HEAD
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=init.defaultBranch GIT_CONFIG_VALUE_0=main bats tests/
+git push origin main
+```
+
+The ruleset allows this fast-forward push of the locally signed merge tip. If main moves,
+review it and sign/test the resulting tip again; never force-push. `brain-app`'s
+`publish-to-engine.sh` output follows this same reviewed PR, local signed merge and push path.
+See [signed updates](signed-updates.md#release-procedure-engine-and-app-payloads) for repairing
+an already web-merged tip, key rotation, bootstrap recovery and immutable installer distribution.

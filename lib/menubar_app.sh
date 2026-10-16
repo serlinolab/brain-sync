@@ -3,7 +3,8 @@
 # running by the engine. The app's build lives in this repo under app/ (put there by brain-app's
 # scripts/publish-to-engine.sh), so it reaches every Mac with the engine's own git self-update -
 # no browser download, hence no quarantine and no Gatekeeper prompt, and no trust root beyond the
-# one this engine already has: protected `main` of this repo.
+# one this engine already has: an allowed SSH signature on its commit. The ZIP checksum
+# authenticates nothing by itself; its authority comes from that signed commit.
 #
 # Sourced by sync.sh after lib/brain_launcher.sh (which defines BRAIN_APP_NAME, BRAIN_APP_DIRS and
 # brain_menubar_app_installed). Never fails its caller: every problem is logged and skipped.

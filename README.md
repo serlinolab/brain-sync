@@ -2,11 +2,18 @@
 
 ## Setup (one step)
 
-Paste this into Terminal and press return:
+Replace both placeholders with the reviewed version ID and SHA256 checksum Max publishes independently, then paste this into Terminal:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/serlinolab/brain-sync/main/setup.sh | bash
+setup_dir=$(mktemp -d) && (
+  cd "$setup_dir" &&
+  curl -fsSLo setup.sh 'https://raw.githubusercontent.com/serlinolab/brain-sync/<REVIEWED_COMMIT_ID>/setup.sh' &&
+  printf '%s  setup.sh\n' '<SHA256_PUBLISHED_BY_MAX>' | shasum -a 256 -c - &&
+  bash setup.sh
+)
 ```
+
+The fixed download address and independently published checksum prevent later server changes from replacing the installer unnoticed.
 
 It asks for your name, then does everything it can on its own. At the end
 it prints one line starting with `SERLINO-BRAIN-SETUP` — copy that whole

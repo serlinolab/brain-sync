@@ -144,3 +144,12 @@ tip() { origin rev-parse --verify -q "refs/heads/$BRANCH"; }
   local offsets; offsets=$(printf '%s\n' "$output" | awk '{ match($0, /  +[^ ]/); print RSTART + RLENGTH - 1 }' | sort -u | wc -l | tr -d ' ')
   [ "$offsets" -eq 1 ]
 }
+
+@test "signature rejection changes heartbeat result immediately and reports enforcement anchor" {
+  BRAIN_UPDATE_ERROR='signature or ancestry rejected' BRAIN_SIGNED_ANCHOR=0123456789012345678901234567890123456789 run_sync_cycle
+  status_file | grep -qx 'result: problem - self-update: signature or ancestry rejected'
+  status_file | grep -qx 'signed updates: enforced'
+  status_file | grep -qx 'signed anchor: 0123456789012345678901234567890123456789'
+  run_sync_cycle
+  status_file | grep -qx 'result: ok'
+}

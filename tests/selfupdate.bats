@@ -34,11 +34,11 @@ teardown() { brain_test_teardown; rm -rf "$BRAIN_SYNC_WORK"; }
 
 @test "a launcher holder whose lock was stolen cannot delete the new owner's lock" {
   BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" --selfcheck-only
-  cat > "$STATE/engine/sync.sh" <<'SCRIPT'
+  cat > "$BRAIN_SYNC_WORK/sync.sh" <<'SCRIPT'
 #!/bin/bash
 sleep 0.5
 SCRIPT
-  chmod +x "$STATE/engine/sync.sh"
+  git -C "$BRAIN_SYNC_WORK" add sync.sh; git_commit "$BRAIN_SYNC_WORK" cycle; git -C "$BRAIN_SYNC_WORK" push -q origin main
   BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" &
   local holder=$!
   sleep 0.1
@@ -55,12 +55,13 @@ SCRIPT
 
 @test "the launcher lock prevents two self-update cycles from running together" {
   BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" --selfcheck-only
-  cat > "$STATE/engine/sync.sh" <<'SCRIPT'
+  cat > "$BRAIN_SYNC_WORK/sync.sh" <<'SCRIPT'
 #!/bin/bash
+[ "${1:-}" = --selfcheck ] && exit 0
 echo run >> "$BRAIN_ROOT/engine-runs"
 sleep 0.3
 SCRIPT
-  chmod +x "$STATE/engine/sync.sh"
+  git -C "$BRAIN_SYNC_WORK" add sync.sh; git_commit "$BRAIN_SYNC_WORK" cycle; git -C "$BRAIN_SYNC_WORK" push -q origin main
   BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" &
   local first=$!
   BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" bash "$REPO_ROOT/lib/launcher.sh" &

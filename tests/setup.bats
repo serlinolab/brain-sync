@@ -23,6 +23,8 @@ setup_setup_test() {
   cp "$REPO_ROOT/lib/common.sh" "$work/lib/common.sh"
   cp "$REPO_ROOT/lib/brain_launcher.sh" "$work/lib/brain_launcher.sh"
   cp -r "$REPO_ROOT/templates/." "$work/templates/"
+  setup_test_signing "$work"
+  printf '#!/bin/bash\nexit 0\n' > "$work/sync.sh"
   git -C "$work" add -A; git -C "$work" -c user.name=fixture -c user.email=fixture@example.com commit -qm engine
   git -C "$work" remote add origin "$BRAIN_ROOT/repos/engine.git"; git -C "$work" push -q origin main
   rm -rf "$work"
@@ -95,7 +97,7 @@ teardown() {
   printf 'parker-v2\n' > "$HOME/Serlinolab/.state/layout"
   git init -q "$HOME/Serlinolab/team"
   git -C "$HOME/Serlinolab/team" remote add origin https://unrelated.example/team.git
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   # grep, not `[[ ]]`: on macOS's bash 3.2, an intermediate `[[ ]]` failure inside a bats
   # @test does NOT fail the test (only `[ ]`/external commands do - a real gotcha this test
@@ -116,7 +118,7 @@ teardown() {
   printf '%s\n' '#!/bin/bash' 'echo LAUNCHCTL_CALLED >> "$LAUNCHCTL_LOG"' 'exit 0' > "$HOME/bin/launchctl"
   chmod +x "$HOME/bin/launchctl"
   LAUNCHCTL_LOG="$BRAIN_ROOT/launchctl.log"; export LAUNCHCTL_LOG
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [ ! -e "$HOME/Library/LaunchAgents/com.serlinolab.brainsync.plist" ]
   [ ! -e "$LAUNCHCTL_LOG" ]
@@ -129,15 +131,15 @@ teardown() {
   "$REAL_GIT" -C "$HOME/Serlinolab/team" remote add origin 'git@brain-team:serlinolab/brain-team.git'
   git init -q "$HOME/Serlinolab/Serlinolab_Brain"
   git -C "$HOME/Serlinolab/Serlinolab_Brain" remote add origin https://unrelated.example/mirror.git
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [[ "$output" == *"$HOME/Serlinolab/Serlinolab_Brain"*"unrelated.example/mirror.git"* ]] || false
 }
 
 @test "setup records person once and refuses a later different person" {
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
-  BRAIN_PERSON=bob run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=bob run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [ "$(cat "$HOME/Serlinolab/.state/person")" = alice ]
   [[ "$output" == *"found 'alice', requested 'bob'"* ]] || false
@@ -147,7 +149,7 @@ teardown() {
   mkdir -p "$HOME/Serlinolab/.state"
   printf 'parker-v2\n' > "$HOME/Serlinolab/.state/layout"
   printf '%s\n' alice > "$HOME/Serlinolab/.state/person"
-  BRAIN_PERSON=bob run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=bob run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [ ! -e "$HOME/Serlinolab/team" ]
   [[ "$output" == *"found 'alice', requested 'bob'"* ]] || false
@@ -159,7 +161,7 @@ teardown() {
   git init -q "$HOME/Serlinolab/team"
   "$REAL_GIT" -C "$HOME/Serlinolab/team" remote add origin 'git@brain-team:serlinolab/brain-team.git'
   git -C "$HOME/Serlinolab/team" remote set-url --add --push origin ssh://attacker.invalid/leak.git
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [[ "$output" == *"including push URLs"* ]] || false
 }
@@ -170,7 +172,7 @@ teardown() {
 @test "setup refuses a ~/Serlinolab whose marker is the earlier parker-v1 layout" {
   mkdir -p "$HOME/Serlinolab/.state" "$HOME/Serlinolab/team/serlinolab"
   printf 'parker-v1\n' > "$HOME/Serlinolab/.state/layout"
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [[ "$output" == *"was not made by this setup"* ]] || false
   [ ! -e "$HOME/Serlinolab/Serlinolab_Brain" ]
@@ -179,19 +181,19 @@ teardown() {
 @test "malformed private keys do not leave an empty public key" {
   mkdir -p "$HOME/.ssh"
   printf 'not a key\n' > "$HOME/.ssh/brain_mirror_ed25519"
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [ ! -e "$HOME/.ssh/brain_mirror_ed25519.pub" ]
 }
 
 @test "failed setup never writes the completion marker" {
-  FAIL_MIRROR=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  FAIL_MIRROR=1 BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [ ! -e "$HOME/Serlinolab/.state/setup-complete" ]
 }
 
 @test "a successful setup lays out Serlinolab_Brain beside team, personal folders, and the signpost" {
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
   [ -d "$HOME/Serlinolab/team/.git" ]
   [ -d "$HOME/Serlinolab/Serlinolab_Brain/.git" ]
@@ -226,7 +228,7 @@ teardown() {
   local global_conf="$BRAIN_ROOT/global-gitconfig"
   printf '[core]\n  hooksPath = .githooks\n' > "$global_conf"
 
-  GIT_CONFIG_GLOBAL="$global_conf" BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  GIT_CONFIG_GLOBAL="$global_conf" BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
 
   echo "a note" >> "$HOME/Serlinolab/team/note.txt"
@@ -255,7 +257,7 @@ teardown() {
   git -C "$teamwork" push -q origin main
   rm -rf "$teamwork"
 
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
 
   echo "a note" >> "$HOME/Serlinolab/team/note2.txt"
@@ -288,7 +290,7 @@ push_colleague_instructions_to_team_origin() {
 
 @test "a colleague's pre-existing CLAUDE.md and .claude never land on disk, even right after the first setup" {
   push_colleague_instructions_to_team_origin
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
   [ ! -e "$HOME/Serlinolab/team/CLAUDE.md" ]
   [ ! -e "$HOME/Serlinolab/team/.claude" ]
@@ -296,7 +298,7 @@ push_colleague_instructions_to_team_origin() {
 
 @test "a failed team clone configuration leaves no team clone at all, and setup reports the failure plainly" {
   push_colleague_instructions_to_team_origin
-  FAIL_SPARSE=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  FAIL_SPARSE=1 BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [ ! -e "$HOME/Serlinolab/team" ]
   [[ "$output" == *"pending"* ]] || false
@@ -318,7 +320,7 @@ push_colleague_instructions_to_team_origin() {
 # to sail through untouched forever. team_is_protected (lib/complete_setup.sh) re-derives the
 # real state instead, so the next cycle must reconfigure it for real.
 @test "a stale team-configured marker does not protect a replacement clone - the next cycle reconfigures it for real" {
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
   local marker_before; marker_before=$(cat "$HOME/Serlinolab/.state/team-configured")
 
@@ -384,7 +386,7 @@ push_colleague_instructions_to_team_origin() {
 # and install_team_hooks genuinely succeeds during the reconfigure attempt below - otherwise a
 # missing-hooks failure would mask the exact gap this test means to prove.
 @test "a sparse-checkout reapply failure blocks the whole cycle, and team_is_protected catches the CLAUDE.md it leaves behind" {
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
 
   push_colleague_instructions_to_team_origin
@@ -425,7 +427,7 @@ push_colleague_instructions_to_team_origin() {
 # function; inject the failure into a real, fully-configured team/ so nothing else in the check
 # chain is what fails.
 @test "a failing push-url enumeration makes team_is_protected refuse, not silently pass" {
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
 
   local fakebin; fakebin="$(mktemp -d)"
@@ -458,13 +460,10 @@ EOF
 # lock, and only releases it once this test says to (a release file), so the collision is
 # certain rather than merely likely under normal test-machine load.
 @test "setup.sh never runs complete_setup while a background cycle holds the lock" {
-  # Pre-seed the layout/person state a first setup.sh run would have written, so this test's
-  # OWN concurrent processes race only on the lock - not on setup.sh's unrelated AC-8 "not
-  # made by this setup" guard, which would otherwise fire the instant the background cycle's
-  # own `mkdir -p $STATE` (lib/common.sh) creates $ROOT first.
-  mkdir -p "$HOME/Serlinolab/.state"
-  printf 'parker-v2\n' > "$HOME/Serlinolab/.state/layout"
-  printf 'alice\n' > "$HOME/Serlinolab/.state/person"
+  # Seed the authenticated engine/hooks before simulating an already running background job.
+  # Setup now takes the lock BEFORE touching the engine, not just around complete_setup.
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -eq 0 ]
 
   local ready="$BRAIN_ROOT/holder-ready" release="$BRAIN_ROOT/holder-release"
   BRAIN_ROOT="$HOME/Serlinolab" SYNC_HOLD_READY_FILE="$ready" SYNC_HOLD_RELEASE_FILE="$release" \
@@ -478,7 +477,7 @@ EOF
   done
   [ -d "$HOME/Serlinolab/.state/run.lock" ]
 
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   : > "$release"   # let the holder proceed with the rest of its cycle now that the collision
                     # setup.sh just hit has already run to completion
   wait "$holder"
@@ -486,7 +485,7 @@ EOF
   # the collision was detected and never raced into complete_setup together - whichever side
   # actually finished configuring it, team/ ends up pointed at the real origin, never a
   # corrupted half-clone from two attempts stepping on each other
-  [[ "$output" == *"already being completed in the background"* ]] || false
+  [[ "$output" == *"Sync is running; retry setup shortly"* ]] || false
   [ -d "$HOME/Serlinolab/team/.git" ]
   [ "$(git -C "$HOME/Serlinolab/team" remote get-url origin)" = 'git@brain-team:serlinolab/brain-team.git' ]
 }
@@ -568,10 +567,10 @@ EOF
 }
 
 @test "setup never overwrites an existing personal README" {
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
   printf 'my own words\n' > "$HOME/Serlinolab/personal/README.md"
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
   [ "$(cat "$HOME/Serlinolab/personal/README.md")" = 'my own words' ]
 }
@@ -581,7 +580,7 @@ EOF
   mkdir -p "$HOME/Serlinolab/.state"
   date -u +%FT%TZ > "$HOME/Serlinolab/.state/setup-complete"   # old layout: has this, never had .state/layout
   mkdir -p "$HOME/Serlinolab/personal/shared" "$HOME/Serlinolab/Serlinolab_Brain"
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [[ "$output" == *"was not made by this setup"* ]] || false
   [ ! -d "$HOME/Serlinolab/team" ]
@@ -590,16 +589,16 @@ EOF
 
 @test "setup refuses a hand-made ~/Serlinolab folder" {
   mkdir -p "$HOME/Serlinolab/whatever"
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [[ "$output" == *"was not made by this setup"* ]] || false
   [ ! -d "$HOME/Serlinolab/.state" ]
 }
 
 @test "re-running setup on its own parker-v2 layout still works" {
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
 }
 
@@ -607,7 +606,7 @@ EOF
 
 # (a)
 @test "first run with keys refused: reports pending, the plist is still written, setup-started is recorded, nothing is cloned" {
-  FAIL_TEAM=1 FAIL_MIRROR=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  FAIL_TEAM=1 FAIL_MIRROR=1 BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [[ "$output" == *pending* ]] || false
   [ -f "$HOME/Library/LaunchAgents/com.serlinolab.brainsync.plist" ]
@@ -618,7 +617,7 @@ EOF
 
 # (b)
 @test "a later sync cycle completes setup once the keys are simulated as registered, with no user action" {
-  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [ ! -e "$HOME/Serlinolab/team" ]
   [ ! -e "$HOME/Serlinolab/Serlinolab_Brain" ]
@@ -642,7 +641,7 @@ EOF
 
 # (c)
 @test "a completed setup is left untouched by later cycles - no reclone, no config or hook drift" {
-  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -eq 0 ]
   local before_config before_precommit before_prepush before_team_inode before_mirror_inode
   before_config=$(git -C "$HOME/Serlinolab/team" config --list)
@@ -667,7 +666,7 @@ EOF
 
 # (d)
 @test "still pending past SETUP_PENDING_ALERT_HOURS raises the attention file in plain words, cleared once complete" {
-  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
 
   SETUP_PENDING_ALERT_HOURS=0 FAIL_TEAM=1 BRAIN_ROOT="$HOME/Serlinolab" run bash "$REPO_ROOT/sync.sh"
@@ -684,7 +683,7 @@ EOF
 
 # (e)
 @test "personal/ is never touched by a pending or a completing background setup cycle" {
-  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   mkdir -p "$HOME/Serlinolab/personal/ideas"
   echo "my plan" > "$HOME/Serlinolab/personal/ideas/plan.txt"
@@ -704,7 +703,7 @@ EOF
 
 # (f)
 @test "a background cycle facing a foreign team origin never adopts it, and raises the attention marker" {
-  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  FAIL_TEAM=1 BRAIN_PERSON=alice run bash "$TEST_SETUP"
   [ "$status" -ne 0 ]
   [ ! -e "$HOME/Serlinolab/team" ]
   git init -q "$HOME/Serlinolab/team"
@@ -736,4 +735,77 @@ EOF
   [[ "$output" == *"< /dev/tty"* ]] || false
   [[ "$output" != *"2>/dev/null"* ]] || false
   [[ "$output" != *" -p "* ]] || false
+}
+
+@test "installer rejects unsigned clone before executing engine or generating access keys" {
+  local attack="$BRAIN_ROOT/attack"
+  git clone -q "$BRAIN_ROOT/repos/engine.git" "$attack"
+  printf 'touch "$HOME/installer-payload-ran"\n' > "$attack/sync.sh"
+  git -C "$attack" add -A
+  git -C "$attack" -c commit.gpgsign=false -c user.name=test -c user.email=test@example.com commit -qm unsigned
+  git -C "$attack" push -q origin main
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -ne 0 ]
+  [ ! -e "$HOME/installer-payload-ran" ]
+  [ ! -e "$HOME/Serlinolab/.state/engine/sync.sh" ]
+  [ ! -e "$HOME/.ssh/brain_team_ed25519" ]
+  [ ! -e "$HOME/Library/LaunchAgents/com.serlinolab.brainsync.plist" ]
+}
+
+@test "installer pin mismatch cannot bootstrap a signed clone" {
+  BRAIN_PERSON=alice run bash "$REPO_ROOT/setup.sh"
+  [ "$status" -ne 0 ]
+  [ ! -e "$HOME/Serlinolab/.state/engine/sync.sh" ]
+  [ ! -e "$HOME/.ssh/brain_team_ed25519" ]
+}
+
+@test "setup rerun cannot downgrade an already pinned engine" {
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -eq 0 ]
+  old=$(git -C "$HOME/Serlinolab/.state/engine" rev-parse HEAD)
+  local work="$BRAIN_ROOT/new-engine"
+  git clone -q "$BRAIN_ROOT/repos/engine.git" "$work"
+  setup_test_signing "$work"
+  echo next > "$work/next"
+  git -C "$work" add -A; git_commit "$work" next
+  git -C "$work" push -q origin main
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -eq 0 ]
+  current=$(git -C "$work" rev-parse HEAD)
+  printf '#!/bin/bash\nexit 1\n' > "$work/sync.sh"
+  git -C "$work" add -A; git_commit "$work" broken
+  git -C "$work" push -q origin main
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -ne 0 ]
+  [ "$(git -C "$HOME/Serlinolab/.state/engine" rev-parse HEAD)" = "$current" ]
+  git -C "$work" push -q --force origin "$old:main"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -ne 0 ]
+  [ "$(git -C "$HOME/Serlinolab/.state/engine" rev-parse HEAD)" = "$current" ]
+}
+
+@test "setup reclaims a stale run lock before fetching the engine" {
+  mkdir -p "$HOME/Serlinolab/.state/run.lock"
+  printf 'parker-v2\n' > "$HOME/Serlinolab/.state/layout"
+  touch -t 202001010000 "$HOME/Serlinolab/.state/run.lock"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -eq 0 ]
+  [ -s "$HOME/Serlinolab/.state/engine-verified" ]
+  [ ! -e "$HOME/Serlinolab/.state/run.lock" ]
+  grep -q 'broke a lock abandoned' "$HOME/Serlinolab/.state/sync.log"
+}
+
+@test "setup leaves a fresh run lock and its owner untouched" {
+  mkdir -p "$HOME/Serlinolab/.state/run.lock"
+  printf 'parker-v2\n' > "$HOME/Serlinolab/.state/layout"
+  printf '999999\n' > "$HOME/Serlinolab/.state/run.lock/pid"
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$HOME/Serlinolab/.state/run.lock/pid")" = 999999 ]
+  [ ! -e "$HOME/Serlinolab/.state/engine" ]
+}
+
+@test "setup and launcher carry identical stale-lock handling" {
+  diff <(sed -n '/^LOCK_STALE_SECONDS=/,/^}$/p' "$REPO_ROOT/setup.sh") \
+       <(sed -n '/^LOCK_STALE_SECONDS=/,/^}$/p' "$REPO_ROOT/lib/launcher.sh")
 }
