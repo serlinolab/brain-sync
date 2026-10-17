@@ -2,7 +2,8 @@
 # Keeps the INSTALLED launcher ($STATE/launcher.sh, what launchd runs) equal to this engine's
 # lib/launcher.sh. setup.sh copied it once and nothing ever refreshed it, so no launcher change
 # had reached a Mac before this (MAX-1629, 2026-10-03). Sourced by sync.sh, which runs only after
-# the launcher's self-update proved this engine copy with `bash -n` and `sync.sh --selfcheck`.
+# the launcher authenticated this engine commit BEFORE `bash -n` and `sync.sh --selfcheck`.
+# Exception: the documented one-time transition from the legacy unauthenticated launcher.
 #
 # The launcher is what rolls a broken engine back, so it is replaced only with a copy that parses,
 # and by rename: the bash running the old one keeps reading its old file, untouched. A Mac with
@@ -20,7 +21,8 @@ ensure_launcher_current(){
   tmp="$dst.new.$$"
   # The replaced one is kept beside it (launcher.sh.prev): the launcher is what rolls a broken
   # engine back, so a launcher that parses but misbehaves has no automatic way back - this file is
-  # the manual one (`cp launcher.sh.prev launcher.sh`).
+  # a manual recovery artifact. NEVER restore a pre-transition unauthenticated launcher;
+  # use a reviewed signed forward fix (docs/signed-updates.md).
   cp -p "$dst" "$dst.prev" 2>/dev/null
   if install -m 0755 "$LAUNCHER_SOURCE" "$tmp" 2>/dev/null && mv -f "$tmp" "$dst" 2>/dev/null; then
     rm -f "$problem"

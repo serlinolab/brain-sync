@@ -42,6 +42,8 @@ heartbeat_body(){
   if [ ! -f "$STATE/launcher.sh" ]; then printf 'launcher: missing\n'
   elif cmp -s "$STATE/launcher.sh" "$(dirname "${BASH_SOURCE[0]}")/launcher.sh"; then printf 'launcher: current\n'
   else printf 'launcher: outdated\n'; fi
+  printf 'signed updates: %s\n' "$(if [ -n "${BRAIN_SIGNED_ANCHOR:-}" ]; then echo enforced; else echo pending-transition; fi)"
+  printf 'signed anchor: %s\n' "${BRAIN_SIGNED_ANCHOR:-pending-transition}"
   printf 'app: %s\n' "$v"
   printf 'app running: %s\n' "$(pgrep -x SerlinoLabBrain >/dev/null 2>&1 && echo yes || echo no)"
   printf 'macos: %s\n' "$(sw_vers -productVersion 2>/dev/null || echo unknown)"
@@ -51,6 +53,7 @@ heartbeat_body(){
 
 publish_heartbeat(){
   local result="$1" last="$STATE/heartbeat-last" problem="$STATE/heartbeat-problem"
+  [ -z "${BRAIN_UPDATE_ERROR:-}" ] || result="problem - self-update: $BRAIN_UPDATE_ERROR"
   # Only from a team/ that setup fully configured: its pre-push secret scan must be in place.
   team_is_protected 2>/dev/null || return 0
   local now prev_at=0 prev_result=""

@@ -12,6 +12,13 @@ BATS_TEST_TIMEOUT=60
 setup() { brain_test_setup; make_fake_brain_sync_origin; MARK_ARG="brain-test-$$-$RANDOM"; export MARK_ARG; }
 teardown() { pkill -f "sleep 7$MARK_ARG" 2>/dev/null; brain_test_teardown; rm -rf "$BRAIN_SYNC_WORK"; }
 
+# Process-tree tests require the host's process enumeration facility (blocked in some sandboxes).
+require_process_listing() {
+  local rc=0
+  pgrep -P $$ >/dev/null 2>&1 || rc=$?
+  [ "$rc" -le 1 ] || skip "host sandbox blocks process enumeration (pgrep/ps)"
+}
+
 # A fake engine whose sync.sh starts a child and then blocks, both recognisable by $MARK_ARG.
 push_stuck_engine() {
   cat > "$BRAIN_SYNC_WORK/sync.sh" <<SCRIPT
@@ -31,6 +38,7 @@ stuck_alive() { pgrep -f "sleep 7$MARK_ARG" >/dev/null; }
 # --- 6: watchdog ---------------------------------------------------------------------------------
 
 @test "a cycle stuck past the time limit is stopped with everything it started, and the lock is freed" {
+  require_process_listing
   push_stuck_engine
   local start=$SECONDS
   CYCLE_TIMEOUT_SECONDS=2 BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" run /bin/bash "$REPO_ROOT/lib/launcher.sh"
@@ -51,6 +59,7 @@ stuck_alive() { pgrep -f "sleep 7$MARK_ARG" >/dev/null; }
 # --- 8: lock-safe stop (what `launchctl kickstart -k` sends) -------------------------------------
 
 @test "TERM to the launcher mid-cycle stops the whole cycle at once and frees the lock" {
+  require_process_listing
   push_stuck_engine
   CYCLE_TIMEOUT_SECONDS=600 BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" /bin/bash "$REPO_ROOT/lib/launcher.sh" &
   local launcher=$!
@@ -69,7 +78,7 @@ stuck_alive() { pgrep -f "sleep 7$MARK_ARG" >/dev/null; }
 # the self-update, bash would defer TERM until a slow `git fetch` returned; launchd SIGKILLs after
 # 20 s and the lock stayed for 30 min. A stub git that blocks on `fetch` reproduces it.
 @test "TERM during the self-update stops it at once and frees the lock" {
-  /bin/bash "$REPO_ROOT/lib/launcher.sh" --selfcheck-only >/dev/null 2>&1 || true   # engine cloned
+  require_process_listing
   BRAIN_SYNC_REMOTE="$FAKE_ORIGIN" /bin/bash "$REPO_ROOT/lib/launcher.sh" --selfcheck-only
   local bin="$BRAIN_ROOT/bin"; mkdir -p "$bin"
   printf '%s\n' '#!/bin/bash' "[ \"\$1\" = fetch ] && exec -a \"sleep 7$MARK_ARG\" sleep 600" "exec $(command -v git) \"\$@\"" > "$bin/git"
@@ -87,6 +96,7 @@ stuck_alive() { pgrep -f "sleep 7$MARK_ARG" >/dev/null; }
 }
 
 @test "a child that ignores TERM is killed anyway" {
+  require_process_listing
   cat > "$BRAIN_SYNC_WORK/sync.sh" <<SCRIPT
 #!/bin/bash
 [ "\${1:-}" = "--selfcheck" ] && exit 0

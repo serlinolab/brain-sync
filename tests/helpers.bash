@@ -106,8 +106,13 @@ make_fake_brain_sync_origin() {
   git init -q -b main "$BRAIN_SYNC_WORK"; mkdir -p "$BRAIN_SYNC_WORK/lib"
   printf '#!/bin/bash\n[ "${1:-}" = "--selfcheck" ] && exit 0\nexit 0\n' > "$BRAIN_SYNC_WORK/sync.sh"
   printf '#!/bin/bash\n: stub\n' > "$BRAIN_SYNC_WORK/lib/common.sh"
+  setup_test_signing "$BRAIN_SYNC_WORK"
   git -C "$BRAIN_SYNC_WORK" add -A; git_commit "$BRAIN_SYNC_WORK" 'good engine'
   git -C "$BRAIN_SYNC_WORK" remote add origin "$FAKE_ORIGIN"; git -C "$BRAIN_SYNC_WORK" push -q origin main
+  mkdir -m 700 "$STATE/update-trust"
+  { printf '# signed-anchor: %s\n' "$(git -C "$BRAIN_SYNC_WORK" rev-parse HEAD)"; cat "$BRAIN_SYNC_WORK/config/allowed_signers"; } > "$STATE/update-trust/allowed_signers"
+  chmod 600 "$STATE/update-trust/allowed_signers"
+  git -C "$BRAIN_SYNC_WORK" rev-parse HEAD > "$STATE/engine-verified"
 }
 
 # AC-4: installs the SAME sparse-checkout + local exclude setup.sh installs on a real Mac -
@@ -220,4 +225,22 @@ while read -r old new ref; do
 done
 HOOK
   chmod +x "$hook"
+}
+
+# Real signatures, entirely under the test HOME; production has no test-key override.
+setup_test_signing() {
+  SIGNING_KEY="$HOME/test-signing"; export SIGNING_KEY
+  [ -f "$SIGNING_KEY" ] || ssh-keygen -q -t ed25519 -N '' -f "$SIGNING_KEY"
+  git -C "$1" config gpg.format ssh
+  git -C "$1" config user.signingkey "$SIGNING_KEY"
+  git -C "$1" config commit.gpgsign true
+  mkdir -p "$1/config"
+  printf 'brain-sync namespaces="git" %s\n' "$(awk '{print $1 " " $2}' "$SIGNING_KEY.pub")" > "$1/config/allowed_signers"
+  local fingerprint
+  fingerprint=$(ssh-keygen -lf "$SIGNING_KEY.pub" -E sha256 | awk '{print $2}')
+  TEST_LAUNCHER="$HOME/test-launcher.sh"; TEST_SETUP="$HOME/test-setup.sh"
+  export TEST_LAUNCHER TEST_SETUP
+  # Swap whatever release fingerprint is pinned (the real one) for this test key's.
+  sed "s|^BOOTSTRAP_SIGNER_FINGERPRINT='[^']*'|BOOTSTRAP_SIGNER_FINGERPRINT='$fingerprint'|" "$REPO_ROOT/lib/launcher.sh" > "$TEST_LAUNCHER"
+  sed "s|^BOOTSTRAP_SIGNER_FINGERPRINT='[^']*'|BOOTSTRAP_SIGNER_FINGERPRINT='$fingerprint'|" "$REPO_ROOT/setup.sh" > "$TEST_SETUP"
 }

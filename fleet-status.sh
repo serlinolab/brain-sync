@@ -27,7 +27,7 @@ names=$(git -C "$work/r" for-each-ref --format='%(refname:strip=3)' refs/heads/s
 now=$(date -u +%s)
 # The MAC column is as wide as the longest name (machine ids are LocalHostName + 4 hex, often 30+).
 w=3; for n in $names; do [ ${#n} -gt "$w" ] && w=${#n}; done
-printf "%-${w}s  %-14s %-36s %s\n" MAC AGE RESULT "ENGINE  LAUNCHER  APP  MACOS"
+printf "%-${w}s  %-14s %-36s %-27s %s\n" MAC AGE RESULT SIGNED "ENGINE  LAUNCHER  APP  MACOS"
 for n in $names; do
   updated=$(field "$n" updated)
   at=$(date -j -u -f %Y-%m-%dT%H:%M:%SZ "$updated" +%s 2>/dev/null || echo 0)
@@ -36,6 +36,9 @@ for n in $names; do
   elif [ "$mins" -lt 1 ]; then age="just now"
   else age="$mins min ago"; fi
   [ "$at" -eq 0 ] || [ "$mins" -gt "$FLEET_STALE_MINUTES" ] && age="$age STALE"
-  printf "%-${w}s  %-14s %-36s %s  %s  %s  %s\n" "$n" "$age" "$(field "$n" result)" \
+  signed=$(field "$n" 'signed updates'); anchor=$(field "$n" 'signed anchor')
+  case "$signed" in enforced|pending-transition|problem) ;; *) signed=problem ;; esac
+  case "$anchor" in ''|*[!0-9a-f]*) anchor=- ;; *) anchor=${anchor:0:7} ;; esac
+  printf "%-${w}s  %-14s %-36s %-27s %s  %s  %s  %s\n" "$n" "$age" "$(field "$n" result)" "$signed $anchor" \
     "$(field "$n" engine)" "$(field "$n" launcher)" "$(field "$n" app)" "$(field "$n" macos)"
 done
