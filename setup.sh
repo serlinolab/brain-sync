@@ -244,22 +244,40 @@ else
   git -C "$ENGINE" fetch --quiet origin main || exit 1
 fi
 candidate=$(git -C "$ENGINE" rev-parse 'FETCH_HEAD^{commit}') || exit 1
-if ! trust_bootstrap "$candidate" || ! trust_advance "$candidate"; then
+if ! trust_bootstrap "$candidate" check; then
   echo "Sync engine signature, bootstrap pin or ancestry rejected; nothing from it was run." >&2
   exit 1
 fi
+# An existing trust store still records every authenticated tip before its selfcheck,
+# preserving the anti-rollback high-water mark even when that release is broken.
+if [ -e "$TRUST_DIR" ] || [ -L "$TRUST_DIR" ]; then
+  trust_advance "$candidate" || exit 1
+fi
+# Remember the installed checkout before testing a bootstrap candidate. Without trust
+# installed yet, a failed selfcheck must leave the legacy path available for retry.
+previous=$(git -C "$ENGINE" rev-parse HEAD 2>/dev/null || echo "")
 git -C "$ENGINE" -c core.hooksPath=/dev/null reset --quiet --hard "$candidate" &&
   git -C "$ENGINE" clean -ffdqx || exit 1
-if ! bash "$ENGINE/sync.sh" --selfcheck; then
-  previous=$(cat "$STATE/engine-verified" 2>/dev/null || echo "")
-  if trust_sha "$previous" && trust_verify "$SIGNERS" "$previous" &&
-     git -C "$ENGINE" merge-base --is-ancestor "$previous" "$candidate"; then
+if ! bash -n "$ENGINE/lib/launcher.sh" || ! bash "$ENGINE/sync.sh" --selfcheck; then
+  if [ -e "$TRUST_DIR" ] || [ -L "$TRUST_DIR" ]; then
+    previous=$(cat "$STATE/engine-verified" 2>/dev/null || echo "")
+    trust_sha "$previous" && trust_verify "$SIGNERS" "$previous" &&
+      git -C "$ENGINE" merge-base --is-ancestor "$previous" "$candidate" || previous=""
+  fi
+  if trust_sha "$previous"; then
     git -C "$ENGINE" -c core.hooksPath=/dev/null reset --quiet --hard "$previous"
     git -C "$ENGINE" clean -ffdqx
   fi
   echo "Signed engine failed selfcheck; setup stopped." >&2
   exit 1
 fi
+# Stage the authenticated launcher before installing trust, then replace it immediately
+# under the same lock. Later rotation/setup failures must not leave a legacy updater active.
+launcher_tmp=$(mktemp "$STATE/.launcher.XXXXXX") || exit 1
+install -m 0755 "$ENGINE/lib/launcher.sh" "$launcher_tmp" || { rm -f "$launcher_tmp"; exit 1; }
+trust_bootstrap "$candidate" || { rm -f "$launcher_tmp"; exit 1; }
+mv -f "$launcher_tmp" "$STATE/launcher.sh" || { rm -f "$launcher_tmp"; exit 1; }
+trust_advance "$candidate" || exit 1
 tmp=$(mktemp "$STATE/.engine-verified.XXXXXX") || exit 1
 printf '%s\n' "$candidate" > "$tmp" && mv -f "$tmp" "$STATE/engine-verified" || exit 1
 trust_rotate "$candidate" || { echo "Invalid signed key rotation." >&2; exit 1; }
@@ -400,12 +418,6 @@ case $complete_setup_rc in
 esac
 
 echo "Installing the background sync job..."
-if [ -f "$ENGINE/lib/launcher.sh" ]; then
-  install -m 0755 "$ENGINE/lib/launcher.sh" "$STATE/launcher.sh" || setup_ok=0
-else
-  echo "Background sync pending: sync engine is not installed." >&2
-  setup_ok=0
-fi
 PLIST_LABEL="com.serlinolab.brainsync"; PLIST_DEST="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
 mkdir -p "$HOME/Library/LaunchAgents"
 xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }

@@ -214,6 +214,47 @@ update_error(){
   export BRAIN_UPDATE_ERROR="$*"
   log "self-update: $*"
 }
+# No working engine means even its heartbeat library and team's pre-push hook may be
+# untrusted. Publish only fixed diagnostics and validated identifiers from an isolated
+# object store: no engine code, hooks, log tail, team history or personal files are used.
+publish_stopped_heartbeat(){
+  local person machine anchor tmp blob tree commit result remote
+  person=$(cat "$STATE/person" 2>/dev/null)
+  case "$person" in ''|*[!a-z0-9-]*) person=unknown ;; esac
+  machine=$(cat "$STATE/machine-id" 2>/dev/null)
+  case "$machine" in
+    ''|*[!A-Za-z0-9._-]*)
+      machine="$( (scutil --get LocalHostName 2>/dev/null || hostname -s 2>/dev/null || echo mac) | tr -c 'A-Za-z0-9._\n-' '-')-$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"
+      printf '%s\n' "$machine" > "$STATE/machine-id" ;;
+  esac
+  anchor=$(trust_anchor 2>/dev/null)
+  trust_sha "$anchor" || anchor=unknown
+  result='problem - self-update: no authenticated working release; retrying next cycle'
+  tmp=$(mktemp -d "$STATE/.stopped-heartbeat.XXXXXX") || return 0
+  remote="${HEARTBEAT_REMOTE:-${EXPECTED_TEAM_REMOTE:-git@brain-team:serlinolab/brain-team.git}}"
+  [ "$remote" != origin ] || remote="${EXPECTED_TEAM_REMOTE:-git@brain-team:serlinolab/brain-team.git}"
+  # Pin GitHub without reading a fetched tree or modifying ~/.ssh/known_hosts.
+  printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$tmp/known_hosts"
+  {
+    printf 'person: %s\nmachine: %s\nupdated: %s\nresult: %s\n' "$person" "$machine" "$(date -u +%FT%TZ)" "$result"
+    printf 'engine: unavailable\nlauncher: current\nsigned updates: problem\nsigned anchor: %s\n' "$anchor"
+  } > "$tmp/status.txt"
+  if git -c core.hooksPath=/dev/null init -q --bare "$tmp/repo" &&
+     blob=$(git -C "$tmp/repo" hash-object -w "$tmp/status.txt") &&
+     tree=$(printf '100644 blob %s\tstatus.txt\n' "$blob" | git -C "$tmp/repo" mktree) &&
+     commit=$(git -C "$tmp/repo" -c user.name="Serlino Brain ($person)" -c user.email="brain-$person@localhost" \
+       -c commit.gpgsign=false commit-tree "$tree" -m 'self-update stopped') &&
+     GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\"$tmp/known_hosts\"}" \
+       run_child git -C "$tmp/repo" -c core.hooksPath=/dev/null push --quiet --force "$remote" \
+       "$commit:refs/heads/status/$person-$machine" >/dev/null 2>&1; then
+    printf '%s %s\n' "$(date +%s)" "$result" > "$STATE/heartbeat-last"
+    rm -f "$STATE/heartbeat-problem"
+  else
+    log "could not publish stopped self-update status; retrying next cycle"
+  fi
+  rm -rf "$tmp"
+  return 0
+}
 # Only an already installed checkout may continue while bootstrap is pending.
 # A fresh --no-checkout clone must never execute an unauthenticated candidate.
 legacy_current=0
@@ -266,7 +307,8 @@ update_engine(){
   # A working fallback must be authenticated and on the accepted history, never arbitrary HEAD.
   if ! trust_sha "$prev" || ! trust_verify "$SIGNERS" "$prev" ||
      ! git merge-base --is-ancestor "$prev" "$anchor"; then
-    update_error "no authenticated working release; execution stopped"; return 1
+    log "self-update: previous working release is not authenticated; fetching a replacement"
+    prev=""
   fi
   if [ "$fetched" = 1 ] || run_child git fetch --quiet origin main 2>/dev/null; then
     new=$(git rev-parse 'FETCH_HEAD^{commit}' 2>/dev/null || echo "")
@@ -292,12 +334,16 @@ update_engine(){
   else
     log "self-update: fetch failed; keeping $prev"
   fi
+  if [ -z "$prev" ]; then
+    update_error "no authenticated working release; execution stopped; retrying next cycle"
+    return 1
+  fi
   # Also repair an interrupted checkout or dirty tree while offline. Never run leftover files.
   git -c core.hooksPath=/dev/null reset --quiet --hard "$prev" && git clean -ffdqx || return 1
   export BRAIN_SIGNED_ANCHOR="$(trust_anchor)"
 }
 unset BRAIN_UPDATE_ERROR BRAIN_SIGNED_ANCHOR
-update_engine || exit 1
+update_engine || { publish_stopped_heartbeat; exit 1; }
 
 [ "${1:-}" = "--selfcheck-only" ] && exit 0
 

@@ -809,3 +809,66 @@ EOF
   diff <(sed -n '/^LOCK_STALE_SECONDS=/,/^}$/p' "$REPO_ROOT/setup.sh") \
        <(sed -n '/^LOCK_STALE_SECONDS=/,/^}$/p' "$REPO_ROOT/lib/launcher.sh")
 }
+
+@test "failed bootstrap selfcheck leaves legacy trust and launcher unchanged for retry" {
+  state="$HOME/Serlinolab/.state"
+  mkdir -p "$state"
+  printf 'parker-v2\n' > "$state/layout"
+  git clone -q "$BRAIN_SYNC_REMOTE" "$state/engine"
+  cp "$REPO_ROOT/tests/fixtures/legacy_launcher.sh" "$state/launcher.sh"
+  previous=$(git -C "$state/engine" rev-parse HEAD)
+  git -C "$state/engine" rev-parse HEAD > "$state/engine-verified"
+  work="$BRAIN_ROOT/engine-work"
+  git clone -q "$BRAIN_SYNC_REMOTE" "$work"
+  setup_test_signing "$work"
+  printf '#!/bin/bash\nexit 1\n' > "$work/sync.sh"
+  git -C "$work" add -A; git_commit "$work" broken
+  git -C "$work" push -q origin main
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -eq 1 ]
+  [ ! -e "$state/update-trust" ]
+  cmp "$state/launcher.sh" "$REPO_ROOT/tests/fixtures/legacy_launcher.sh"
+  [ "$(git -C "$state/engine" rev-parse HEAD)" = "$previous" ]
+  printf '#!/bin/bash\nexit 0\n' > "$work/sync.sh"
+  git -C "$work" add -A; git_commit "$work" repaired
+  git -C "$work" push -q origin main
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -eq 0 ]
+  [ -f "$state/update-trust/allowed_signers" ]
+  cmp "$state/launcher.sh" "$work/lib/launcher.sh"
+}
+
+@test "setup replaces legacy launcher before a complete_setup refusal" {
+  state="$HOME/Serlinolab/.state"
+  mkdir -p "$state"
+  printf 'parker-v2\n' > "$state/layout"
+  cp "$REPO_ROOT/tests/fixtures/legacy_launcher.sh" "$state/launcher.sh"
+  git init -q "$HOME/Serlinolab/team"
+  git -C "$HOME/Serlinolab/team" remote add origin https://unrelated.example/team.git
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -eq 1 ]
+  [ -f "$state/update-trust/allowed_signers" ]
+  cmp "$state/launcher.sh" "$state/engine/lib/launcher.sh"
+  [ ! -e "$HOME/Library/LaunchAgents/com.serlinolab.brainsync.plist" ]
+}
+
+@test "setup installs the authenticated launcher even when key rotation then fails" {
+  state="$HOME/Serlinolab/.state"
+  mkdir -p "$state"
+  printf 'parker-v2\n' > "$state/layout"
+  cp "$REPO_ROOT/tests/fixtures/legacy_launcher.sh" "$state/launcher.sh"
+  work="$BRAIN_ROOT/engine-work"
+  git clone -q "$BRAIN_SYNC_REMOTE" "$work"
+  setup_test_signing "$work"
+  git clone -q "$BRAIN_SYNC_REMOTE" "$state/engine"
+  mkdir -m 700 "$state/update-trust"
+  { printf '# signed-anchor: %s\n' "$(git -C "$work" rev-parse HEAD)"; cat "$work/config/allowed_signers"; } > "$state/update-trust/allowed_signers"
+  chmod 600 "$state/update-trust/allowed_signers"
+  echo invalid > "$work/config/allowed_signers"
+  git -C "$work" add -A; git_commit "$work" invalid-rotation
+  git -C "$work" push -q origin main
+  BRAIN_PERSON=alice run bash "$TEST_SETUP"
+  [ "$status" -eq 1 ]
+  printf '%s' "$output" | grep -q 'Invalid signed key rotation'
+  cmp "$state/launcher.sh" "$work/lib/launcher.sh"
+}

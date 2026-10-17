@@ -153,3 +153,20 @@ tip() { origin rev-parse --verify -q "refs/heads/$BRANCH"; }
   run_sync_cycle
   status_file | grep -qx 'result: ok'
 }
+
+@test "fleet summary shows all signed-update states and shortened anchors from full status" {
+  for signed in enforced pending-transition problem; do
+    local f="$BRAIN_ROOT/status.txt" blob tree commit
+    status_file | sed -e "s/^signed updates: .*/signed updates: $signed/" \
+      -e 's/^signed anchor: .*/signed anchor: 0123456789012345678901234567890123456789/' > "$f"
+    blob=$(origin hash-object -w "$f"); tree=$(printf '100644 blob %s\tstatus.txt\n' "$blob" | origin mktree)
+    commit=$(origin -c user.name=t -c user.email=t@t commit-tree "$tree" -m signed)
+    origin update-ref "refs/heads/status/$signed" "$commit"
+  done
+  FLEET_REMOTE="$BRAIN_ROOT/origin-team.git" run bash "$REPO_ROOT/fleet-status.sh"
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -q 'SIGNED'
+  for signed in enforced pending-transition problem; do
+    printf '%s\n' "$output" | grep -q "$signed 0123456"
+  done
+}
