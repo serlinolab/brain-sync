@@ -240,6 +240,7 @@ setup_test_signing() {
   fingerprint=$(ssh-keygen -lf "$SIGNING_KEY.pub" -E sha256 | awk '{print $2}')
   TEST_LAUNCHER="$HOME/test-launcher.sh"; TEST_SETUP="$HOME/test-setup.sh"
   export TEST_LAUNCHER TEST_SETUP
-  sed "s|REPLACE_WITH_MAX_SSH_SHA256_FINGERPRINT|$fingerprint|g" "$REPO_ROOT/lib/launcher.sh" > "$TEST_LAUNCHER"
-  sed "s|REPLACE_WITH_MAX_SSH_SHA256_FINGERPRINT|$fingerprint|g" "$REPO_ROOT/setup.sh" > "$TEST_SETUP"
+  # Swap whatever release fingerprint is pinned (the real one) for this test key's.
+  sed "s|^BOOTSTRAP_SIGNER_FINGERPRINT='[^']*'|BOOTSTRAP_SIGNER_FINGERPRINT='$fingerprint'|" "$REPO_ROOT/lib/launcher.sh" > "$TEST_LAUNCHER"
+  sed "s|^BOOTSTRAP_SIGNER_FINGERPRINT='[^']*'|BOOTSTRAP_SIGNER_FINGERPRINT='$fingerprint'|" "$REPO_ROOT/setup.sh" > "$TEST_SETUP"
 }

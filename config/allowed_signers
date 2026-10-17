@@ -1,2 +1,2 @@
-# Replace before rollout: brain-sync namespaces="git" ssh-ed25519 <dedicated release public key>
-# This key signs only reviewed release tips; never use an everyday commit-signing key.
+# Dedicated brain-sync release key (Max). Signs only reviewed release tips; never an everyday commit-signing key.
+brain-sync namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILVMzV4g7G4TKacVJGCfAnCg/xtDgECImfnJoV+0O1Gb

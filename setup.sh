@@ -86,7 +86,7 @@ fi
 # --- signed trust: identical in setup.sh and lib/launcher.sh; never source from a fetched tree.
 # Pin the dedicated release key in BOTH entry points before shipping. No environment override.
 # Bootstrap accepts only ssh-ed25519 keys (including both keys during a rotation bridge).
-BOOTSTRAP_SIGNER_FINGERPRINT='REPLACE_WITH_MAX_SSH_SHA256_FINGERPRINT'
+BOOTSTRAP_SIGNER_FINGERPRINT='SHA256:Xg9wI1FYOIN4LfRJgZFfXbyEEBwPcvlFVwhsZgzk6KA'
 export GIT_NO_REPLACE_OBJECTS=1
 TRUST_DIR="$STATE/update-trust"
 SIGNERS="$TRUST_DIR/allowed_signers"
