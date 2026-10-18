@@ -1,5 +1,9 @@
 # Serlino Brain — Mac sync
 
+> **Proprietary Notice:** Copyright © 2026 MAXORA SRL / Massimiliano Monaco. All rights reserved.
+> Confidential and proprietary software. Unauthorized copying, distribution, modification, or use is prohibited.
+> See [NOTICE](./NOTICE) for full terms.
+
 ## Setup (one step)
 
 Replace both placeholders with the reviewed version ID and SHA256 checksum Max publishes independently, then paste this into Terminal:
