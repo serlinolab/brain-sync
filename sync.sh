@@ -77,7 +77,8 @@ else
   complete_setup
   setup_rc=$?
 fi
-# Local only, never fatal: installs, updates and keeps running the SerlinoLab Brain menu-bar app
+# Local only, never fatal: installs, updates and keeps running the Serlino Brain app (or, before
+# app/desktop/ exists, the SerlinoLab Brain menu-bar app)
 # from app/ (lib/menubar_app.sh). Before the network on purpose: the zip arrived with this
 # engine's own self-update, so this needs nothing from GitHub.
 ensure_menubar_app

@@ -296,3 +296,64 @@ version_at() { /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$
   BRAIN_MACOS_VERSION=14.0 ensure_menubar_app
   [ -d "$HOME/Applications/$APP_NAME" ]
 }
+
+# 2026-11: Serlino Brain (serlinolab/brain-desktop) is the one app. Its build in app/desktop/
+# wins over the old menu-bar app's, starts hidden, and retires the old app once it is in place.
+DESKTOP_NAME="Serlino Brain.app"
+
+make_desktop_bundle() {
+  mkdir -p "$1/Contents/MacOS"
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><dict>' \
+    '<key>CFBundleIdentifier</key><string>com.serlinolab.brain-desktop</string>' \
+    '<key>CFBundleExecutable</key><string>SerlinoBrainDesktop</string>' \
+    "<key>CFBundleShortVersionString</key><string>$2</string>" '</dict></plist>' > "$1/Contents/Info.plist"
+  printf '#!/bin/sh\nexit 0\n' > "$1/Contents/MacOS/SerlinoBrainDesktop"; chmod +x "$1/Contents/MacOS/SerlinoBrainDesktop"
+  codesign --force --sign - "$1" 2>/dev/null
+}
+publish_desktop() {
+  local work="$BRAIN_ROOT/desktop-work-$1" src="$BRAIN_APP_SOURCE/desktop"; mkdir -p "$src"
+  make_desktop_bundle "$work/$DESKTOP_NAME" "$1"
+  ditto -c -k --keepParent "$work/$DESKTOP_NAME" "$src/serlino-brain.zip"
+  shasum -a 256 "$src/serlino-brain.zip" | cut -d' ' -f1 > "$src/SHA256"
+  echo "$1" > "$src/VERSION"
+}
+
+@test "Serlino Brain is installed from app/desktop, started hidden with --background" {
+  publish 0.2.2
+  publish_desktop 0.6.0
+  ensure_menubar_app
+  [ "$(version_at "$HOME/Applications/$DESKTOP_NAME")" = "0.6.0" ]
+  grep -qF -- "-g -j $HOME/Applications/$DESKTOP_NAME --args --background" "$BRAIN_ROOT/open.log"
+  [ ! -e "$HOME/Applications/$APP_NAME" ]          # the old app's build is ignored
+  grep -q "installed the Serlino Brain app 0.6.0" "$LOG"
+}
+
+@test "the old SerlinoLab Brain app is stopped and removed once Serlino Brain is in place" {
+  local sys="$BRAIN_ROOT/SysApplications"; mkdir -p "$sys"
+  BRAIN_APP_DIRS="$sys:$HOME/Applications"
+  make_bundle "$sys/$APP_NAME" 0.2.2
+  : > "$STATE/app-quit"                             # a quit of the old app does not carry over
+  publish_desktop 0.6.0
+  ensure_menubar_app
+  [ ! -e "$sys/$APP_NAME" ]
+  [ "$(version_at "$HOME/Applications/$DESKTOP_NAME")" = "0.6.0" ]
+  grep -qF -- "-x SerlinoLabBrain" "$BRAIN_ROOT/pkill.log"
+  grep -q "removed the SerlinoLab Brain app" "$LOG"
+  [ ! -e "$STATE/app-quit" ]
+  grep -qF -- "--background" "$BRAIN_ROOT/open.log"
+}
+
+@test "the old app stays when Serlino Brain could not be installed" {
+  make_bundle "$HOME/Applications/$APP_NAME" 0.2.2
+  publish_desktop 0.6.0
+  echo 0000 > "$BRAIN_APP_SOURCE/desktop/SHA256"
+  ensure_menubar_app
+  [ -e "$HOME/Applications/$APP_NAME" ]
+  [ ! -e "$HOME/Applications/$DESKTOP_NAME" ]
+  grep -q "checksum" "$LOG"
+}
+
+@test "with Serlino Brain installed the old Desktop launcher stays off" {
+  make_desktop_bundle "$HOME/Applications/$DESKTOP_NAME" 0.6.0
+  brain_menubar_app_installed
+}

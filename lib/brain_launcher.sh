@@ -20,13 +20,17 @@ BRAIN_LAUNCHER_STAMP_ATTR="com.serlinolab.launcher-script"
 # installed in either folder, this launcher is not built or rebuilt - and an existing one is
 # left exactly where it is: removing a person's app is the menu-bar app's call (it asks), never a
 # background job's. Remove the menu-bar app and the next cycle builds the launcher again.
+# Since 2026-11 the one app "Serlino Brain" (serlinolab/brain-desktop) replaces it and carries the
+# same button; either one counts.
 BRAIN_APP_NAME="SerlinoLab Brain"
 BRAIN_APP_DIRS="${BRAIN_APP_DIRS:-/Applications:$HOME/Applications}"   # colon-separated, like PATH
 brain_menubar_app_installed(){
-  local d IFS=:
+  local d n IFS=:
   # Info.plist, not just the folder: an interrupted drag leaves an empty .app that would turn
   # the launcher off with nothing working in its place.
-  for d in $BRAIN_APP_DIRS; do [ -f "$d/$BRAIN_APP_NAME.app/Contents/Info.plist" ] && return 0; done
+  for n in "SerlinoLab Brain" "Serlino Brain"; do
+    for d in $BRAIN_APP_DIRS; do [ -f "$d/$n.app/Contents/Info.plist" ] && return 0; done
+  done
   return 1
 }
 
