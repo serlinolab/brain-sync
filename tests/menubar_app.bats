@@ -296,3 +296,11 @@ version_at() { /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$
   BRAIN_MACOS_VERSION=14.0 ensure_menubar_app
   [ -d "$HOME/Applications/$APP_NAME" ]
 }
+
+# 2026-11: from 0.6.0 the app is Serlino Brain (serlinolab/brain-desktop), the Brain window plus the
+# menu-bar dot under the old app's name. Started by the engine it must not open its window.
+@test "the app is started with --background, so no window opens by itself" {
+  publish 0.6.0
+  ensure_menubar_app
+  grep -qF -- "-g $HOME/Applications/$APP_NAME --args --background" "$BRAIN_ROOT/open.log"
+}

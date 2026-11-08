@@ -49,7 +49,7 @@ git_commit() {
 
 seed_repo() {
   local origin="$1" dest="$2" file="$3" tmp; tmp="$(mktemp -d)"
-  git init -q --bare "$origin"; git init -q -b main "$tmp"
+  git init -q --bare -b main "$origin"; git init -q -b main "$tmp"
   mkdir -p "$(dirname "$tmp/$file")"; echo hello > "$tmp/$file"
   git -C "$tmp" add -A; git_commit "$tmp" init
   git -C "$tmp" remote add origin "$origin"; git -C "$tmp" push -q origin main
@@ -102,7 +102,7 @@ run_sync_cycle() { bash "$REPO_ROOT/sync.sh"; }
 make_fake_brain_sync_origin() {
   FAKE_ORIGIN="$BRAIN_ROOT/origin-brain-sync.git"; export FAKE_ORIGIN
   BRAIN_SYNC_WORK="$(mktemp -d)"; export BRAIN_SYNC_WORK
-  git init -q --bare "$FAKE_ORIGIN"
+  git init -q --bare -b main "$FAKE_ORIGIN"
   git init -q -b main "$BRAIN_SYNC_WORK"; mkdir -p "$BRAIN_SYNC_WORK/lib"
   printf '#!/bin/bash\n[ "${1:-}" = "--selfcheck" ] && exit 0\nexit 0\n' > "$BRAIN_SYNC_WORK/sync.sh"
   printf '#!/bin/bash\n: stub\n' > "$BRAIN_SYNC_WORK/lib/common.sh"
@@ -183,7 +183,7 @@ make_writable_brain() {
   mkdir -p "$ROOT" "$STATE/engine/lib"
   cp "$REPO_ROOT/lib/secretscan.sh" "$STATE/engine/lib/secretscan.sh"
   cp "$REPO_ROOT/lib/generated_files.sh" "$STATE/engine/lib/generated_files.sh"
-  git init -q --bare "$BRAIN_ROOT/origin-mirror.git"; git init -q -b main "$tmp"
+  git init -q --bare -b main "$BRAIN_ROOT/origin-mirror.git"; git init -q -b main "$tmp"
   seed_brain_tree "$tmp"
   git -C "$tmp" add -A; git_commit "$tmp" init
   git -C "$tmp" remote add origin "$BRAIN_ROOT/origin-mirror.git"; git -C "$tmp" push -q origin main

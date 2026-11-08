@@ -152,6 +152,9 @@ start_menubar_app(){
     fi
   fi
   pgrep -x "$BRAIN_APP_EXECUTABLE" >/dev/null 2>&1 && return 0
-  if open -g "$1" >/dev/null 2>&1; then menubar_app_ok start
+  # --background: since 0.6.0 the app is Serlino Brain (serlinolab/brain-desktop), the Brain window
+  # plus this menu-bar dot, under the same name; started by the engine it opens no window. Older
+  # builds ignore the argument.
+  if open -g "$1" --args --background >/dev/null 2>&1; then menubar_app_ok start
   else menubar_app_log start "could not start the SerlinoLab Brain app"; fi
 }
