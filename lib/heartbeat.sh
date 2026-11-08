@@ -27,20 +27,13 @@ heartbeat_machine(){
 
 # $1 = this cycle's result, e.g. "ok" or "problem - mirror unreachable".
 heartbeat_body(){
-  # The app this Mac runs: Serlino Brain (the one app since 2026-11), else the older SerlinoLab
-  # Brain menu-bar app. The name is part of the value so the fleet can see who has switched.
-  local app="" d n v=absent
+  local app="$HOME/Applications/SerlinoLab Brain.app" d v
   local IFS=:
-  for n in "Serlino Brain" "SerlinoLab Brain"; do
-    for d in ${BRAIN_APP_DIRS:-/Applications:$HOME/Applications}; do
-      [ -f "$d/$n.app/Contents/Info.plist" ] && { app="$d/$n.app"; break 2; }
-    done
+  for d in ${BRAIN_APP_DIRS:-/Applications:$HOME/Applications}; do
+    [ -f "$d/SerlinoLab Brain.app/Contents/Info.plist" ] && { app="$d/SerlinoLab Brain.app"; break; }
   done
   unset IFS
-  if [ -n "$app" ]; then
-    v=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || echo absent)
-    case "$app" in */"Serlino Brain.app") [ "$v" = absent ] || v="Serlino Brain $v" ;; esac
-  fi
+  v=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || echo absent)
   printf 'person: %s\n' "$PERSON_SLUG"
   printf 'machine: %s\n' "$(heartbeat_machine)"
   printf 'updated: %s\n' "$(date -u +%FT%TZ)"

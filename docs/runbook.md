@@ -276,6 +276,12 @@ self-update, so no browser download is involved: no quarantine, no Gatekeeper pr
 root beyond the allowed SSH signature on the engine commit; `app/SHA256` is trusted only
 because that commit is signed. See [signed updates and fleet rollout](signed-updates.md).
 
+- **Since 0.6.0 the app comes from `serlinolab/brain-desktop`** (Serlino Brain: the Brain window plus
+  this menu-bar dot, Fix and onboarding). It keeps this app's bundle name, executable and bundle id,
+  so each Mac's engine updates it in place; brain-app is no longer published. Build and publish
+  from brain-desktop with
+  `SIGN_IDENTITY="Developer ID Application: MAXORA SRL (MT4WJD6Y53)" NOTARY_PROFILE=serlino-notary scripts/publish-to-engine.sh ../brain-sync`
+  (it refuses an ad-hoc build). The engine starts the app with `--args --background`: no window.
 - **Ship a new version:** in brain-app, bump `VERSION`, then `scripts/publish-to-engine.sh ../brain-sync`
   and open a pull request here with the three changed files in `app/`. Merge that PR locally using
   the release procedure below; never use the GitHub merge button. After publishing the main tip
@@ -289,25 +295,6 @@ because that commit is signed. See [signed updates and fleet rollout](signed-upd
 - **A brand-new Mac** needs the immutable checksum-checked installer first; see the onboarding
   instructions above and the pending DMG re-vendor follow-up.
 - **Stop distributing it:** delete `app/` here; installed copies stay, nothing new is installed.
-
-## Serlino Brain, the one app (2026-11)
-
-Serlino Brain (`serlinolab/brain-desktop`, from 0.6.0) is the Brain window plus the same menu-bar
-dot, Fix and onboarding as the menu-bar app above, which it replaces. Its build lives in
-`app/desktop/` and is shipped the same way:
-
-- **Ship a version:** in brain-desktop, bump `VERSION`, then
-  `SIGN_IDENTITY="Developer ID Application: MAXORA SRL (MT4WJD6Y53)" NOTARY_PROFILE=serlino-notary scripts/publish-to-engine.sh ../brain-sync`
-  (Developer ID only: the script refuses an ad-hoc build) and open a pull request here with the
-  three files in `app/desktop/`. Release it like any engine release, below.
-- **What a Mac does:** when `app/desktop/serlino-brain.zip` is present, `lib/menubar_app.sh`
-  installs Serlino Brain with the same checks (checksum, signature, version), starts it hidden
-  (`open -g -j … --args --background`: menu-bar dot, no window), and once it is in place at the
-  shipped version stops and deletes every `SerlinoLab Brain.app`. A failed install leaves the old
-  app running. A quit of the old app does not carry over to the new one.
-- **Rolling back:** delete `app/desktop/`. Macs keep Serlino Brain installed but the engine goes
-  back to installing the menu-bar app next to it; delete Serlino Brain by hand if needed.
-- The heartbeat's `app:` line says `Serlino Brain <version>` once a Mac has switched.
 
 ## Publishing an engine release
 
