@@ -282,8 +282,9 @@ because that commit is signed. See [signed updates and fleet rollout](signed-upd
   from brain-desktop with
   `SIGN_IDENTITY="Developer ID Application: MAXORA SRL (MT4WJD6Y53)" NOTARY_PROFILE=serlino-notary scripts/publish-to-engine.sh ../brain-sync`
   (it refuses an ad-hoc build). The engine starts the app with `--args --background`: no window.
-- **Ship a new version:** in brain-app, bump `VERSION`, then `scripts/publish-to-engine.sh ../brain-sync`
-  and open a pull request here with the three changed files in `app/`. Merge that PR locally using
+- **Ship a new version:** in brain-desktop (never brain-app any more: its 0.2.x build would replace
+  0.6.x on every Mac, because the engine installs any version that differs), bump `VERSION`, run the
+  command above and open a pull request here with the three changed files in `app/`. Merge that PR locally using
   the release procedure below; never use the GitHub merge button. After publishing the main tip
   signed with the dedicated release key, each Mac installs it within one or two cycles. The engine installs only when `app/VERSION` differs from the installed
   copy's version, and only after `app/SHA256`, the bundle signature and the bundle's own version all check out.
