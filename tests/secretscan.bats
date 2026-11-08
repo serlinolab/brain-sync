@@ -140,7 +140,7 @@ fake_sk_proj() { printf 'sk-proj-%s\n' "$(printf 'a%.0s' $(seq 1 80))"; }
 @test "the pre-push hook catches a secret in the ROOT commit of a brand-new branch (diff-tree needs --root)" {
   local fresh; fresh="$(mktemp -d)"
   local fresh_origin="$BRAIN_ROOT/origin-fresh.git"
-  git init -q --bare "$fresh_origin"
+  git init -q --bare -b main "$fresh_origin"
   git init -q -b main "$fresh"
   fake_github_pat > "$fresh/secret.txt"
   git -C "$fresh" add secret.txt

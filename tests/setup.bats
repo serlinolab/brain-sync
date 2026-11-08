@@ -6,9 +6,9 @@ setup_setup_test() {
   HOME="$(mktemp -d)"; export HOME
   mkdir -p "$HOME/bin" "$BRAIN_ROOT/repos"
   REAL_GIT="$(type -P git)"; export REAL_GIT
-  git init -q --bare "$BRAIN_ROOT/repos/engine.git"
-  git init -q --bare "$BRAIN_ROOT/repos/mirror.git"
-  git init -q --bare "$BRAIN_ROOT/repos/team.git"
+  git init -q --bare -b main "$BRAIN_ROOT/repos/engine.git"
+  git init -q --bare -b main "$BRAIN_ROOT/repos/mirror.git"
+  git init -q --bare -b main "$BRAIN_ROOT/repos/team.git"
   local work; work="$(mktemp -d)"
   git init -q -b main "$work"
   mkdir -p "$work/lib" "$work/templates"
