@@ -59,6 +59,10 @@ BRAIN_REPLACED="$STATE/brain-replaced"                # an ignored local file a 
 BRAIN_PRESERVE_FAILED="$STATE/brain_preserve_failed"  # a copy of a person's Brain work failed: nothing was reset
 BRAIN_NOTICE_MINUTES="${BRAIN_NOTICE_MINUTES:-1440}"  # how long the attention file mentions the two above
 QUARANTINE="$STATE/quarantine"    # AC-4: locally-created instruction files are moved here, never deleted
+# A Mac set up through the app's sign-in reaches GitHub over HTTPS with the app's credential
+# helper instead of the SSH keys: lib/auth_mode.sh sets the HTTPS remotes before the defaults below.
+# shellcheck source=lib/auth_mode.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/auth_mode.sh"
 ONLINE_CHECK_REMOTE="${ONLINE_CHECK_REMOTE:-git@brain-mirror:serlinolab/Serlinolab-Brain.git}"
 # MAX-1515 fix 4b: what setup.sh ever adopts or creates team/ and the mirror against - the
 # engine re-checks a repo's origin against these before every cycle's mutating operations, so

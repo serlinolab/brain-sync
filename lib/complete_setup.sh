@@ -21,6 +21,8 @@ source "$_COMPLETE_SETUP_LIBDIR/secretscan.sh"
 # shellcheck source=lib/mirror_links.sh
 source "$_COMPLETE_SETUP_LIBDIR/mirror_links.sh"
 
+# shellcheck source=lib/auth_mode.sh
+source "$_COMPLETE_SETUP_LIBDIR/auth_mode.sh"   # sign-in mode: HTTPS remotes instead of the SSH aliases
 EXPECTED_TEAM_REMOTE="${EXPECTED_TEAM_REMOTE:-git@brain-team:serlinolab/brain-team.git}"
 EXPECTED_MIRROR_REMOTE="${EXPECTED_MIRROR_REMOTE:-git@brain-mirror:serlinolab/Serlinolab-Brain.git}"
 
