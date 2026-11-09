@@ -35,6 +35,15 @@ EXPECTED_MIRROR_REMOTE="${EXPECTED_MIRROR_REMOTE:-git@brain-mirror:serlinolab/Se
 # tests, without this one, and the two deliberately differ on a missing dir/.git - it is "not a
 # mismatch" there (every caller already guards it separately) but IS one here, which every
 # caller in this file relies on. Keep the two in step whenever either changes.
+# Why a clone is still pending, in the words that fit how this Mac reaches GitHub.
+pending_reason() {
+  if [ "${BRAIN_SIGNIN_MODE:-0}" = 1 ]; then
+    echo "it will complete on the next sync once your MediaBuy sign-in reaches the Brain (sign in again in the app if it doesn't)."
+  else
+    echo "it will complete once Max has registered your key."
+  fi
+}
+
 remote_matches() {
   local path="$1" expected="$2" url push_urls
   [ -d "$path/.git" ] || return 1
@@ -198,7 +207,7 @@ complete_setup() {
       if remote_matches "$team" "$EXPECTED_TEAM_REMOTE"; then
         echo "$team was already completed elsewhere; leaving it in place." >&2
       fi
-      echo "Team folder clone pending - it will complete once Max has registered your key." >&2
+      echo "Team folder clone pending - $(pending_reason)" >&2
       return 1
     fi
   fi
@@ -253,7 +262,7 @@ complete_setup() {
     if ! { [ "$mirror_owned" -eq 1 ] && git clone --quiet --no-checkout -c core.hooksPath="$mirror/.git/hooks" -c core.symlinks=true \
          "$EXPECTED_MIRROR_REMOTE" "$mirror"; }; then
       [ "$mirror_owned" -eq 1 ] && rmdir "$mirror" 2>/dev/null
-      echo "Mirror clone pending - it will complete once Max has registered your key." >&2
+      echo "Mirror clone pending - $(pending_reason)" >&2
       return 1
     fi
     mirror_needs_checkout=1
