@@ -241,6 +241,12 @@ setup_test_signing() {
   TEST_LAUNCHER="$HOME/test-launcher.sh"; TEST_SETUP="$HOME/test-setup.sh"
   export TEST_LAUNCHER TEST_SETUP
   # Swap whatever release fingerprint is pinned (the real one) for this test key's.
-  sed "s|^BOOTSTRAP_SIGNER_FINGERPRINT='[^']*'|BOOTSTRAP_SIGNER_FINGERPRINT='$fingerprint'|" "$REPO_ROOT/lib/launcher.sh" > "$TEST_LAUNCHER"
-  sed "s|^BOOTSTRAP_SIGNER_FINGERPRINT='[^']*'|BOOTSTRAP_SIGNER_FINGERPRINT='$fingerprint'|" "$REPO_ROOT/setup.sh" > "$TEST_SETUP"
+  # The auto-release pin gets a test key of its own (AUTO_SIGNING_KEY), never in allowed_signers by default.
+  AUTO_SIGNING_KEY="$HOME/test-auto-signing"; export AUTO_SIGNING_KEY
+  [ -f "$AUTO_SIGNING_KEY" ] || ssh-keygen -q -t ed25519 -N '' -f "$AUTO_SIGNING_KEY"
+  local auto_fingerprint
+  auto_fingerprint=$(ssh-keygen -lf "$AUTO_SIGNING_KEY.pub" -E sha256 | awk '{print $2}')
+  local pins="s|^BOOTSTRAP_SIGNER_FINGERPRINT='[^']*'|BOOTSTRAP_SIGNER_FINGERPRINT='$fingerprint'|;s|^BOOTSTRAP_AUTO_SIGNER_FINGERPRINT='[^']*'|BOOTSTRAP_AUTO_SIGNER_FINGERPRINT='$auto_fingerprint'|"
+  sed "$pins" "$REPO_ROOT/lib/launcher.sh" > "$TEST_LAUNCHER"
+  sed "$pins" "$REPO_ROOT/setup.sh" > "$TEST_SETUP"
 }

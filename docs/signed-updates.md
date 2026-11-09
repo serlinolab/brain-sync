@@ -54,6 +54,19 @@ replacement trust plus a reviewed signed recovery release out of band to each Ma
 the Mac's pin. Never erase ancestry state to
 accept a force-push; recover by signing a forward fix or an explicitly audited local rebootstrap.
 
+**Auto-release key (2026-11-09, Max's decision):** a second, passphrase-less release key lives on
+Max's Mac Studio only (`~/.ssh/brain_sync_auto_release_ed25519`, fingerprint
+`SHA256:G4H6y4Nah8c+MSOAg9HCgcXLDjMZBMV8Y7tsmCjyfFE`). It lets releases be published unattended
+(brain-desktop `AUTO=1 scripts/sign-engine-release.sh <PR>`). It is listed in `config/allowed_signers`
+beside Max's key, and pinned as `BOOTSTRAP_AUTO_SIGNER_FINGERPRINT` in setup.sh and lib/launcher.sh so a
+new Mac can bootstrap from a tip it signed. It was enrolled by a release signed with Max's key, as every
+change to the list must be. **Trade-off accepted by Max:** anything running as Max on the Mac Studio can
+sign a release that every Mac installs, and while it is listed it could also sign a list change.
+**Revoke it** (a lost or compromised Mac Studio, or no longer wanted): with Max's passphrase key, sign a
+release that deletes its line from `config/allowed_signers` and the `BOOTSTRAP_AUTO_SIGNER_FINGERPRINT`
+lines from setup.sh and lib/launcher.sh (keep the two trust blocks identical), then delete the key file on
+the Mac Studio. If the key may have been used by someone else, treat it as the emergency revocation above.
+
 **App ZIP:** `app/SHA256` detects corruption; it is authoritative only because the commit
 carrying both checksum and ZIP has an allowed signature. Bundle validation is an additional check.
 

@@ -87,6 +87,9 @@ fi
 # Pin the dedicated release key in BOTH entry points before shipping. No environment override.
 # Bootstrap accepts only ssh-ed25519 keys (including both keys during a rotation bridge).
 BOOTSTRAP_SIGNER_FINGERPRINT='SHA256:Xg9wI1FYOIN4LfRJgZFfXbyEEBwPcvlFVwhsZgzk6KA'
+# Max's unattended release key on his Mac Studio (docs/signed-updates.md, "Auto-release key"):
+# bootstrap trusts a commit it signed like one signed by the pin above. Revoke both lines together.
+BOOTSTRAP_AUTO_SIGNER_FINGERPRINT='SHA256:G4H6y4Nah8c+MSOAg9HCgcXLDjMZBMV8Y7tsmCjyfFE'
 export GIT_NO_REPLACE_OBJECTS=1
 TRUST_DIR="$STATE/update-trust"
 SIGNERS="$TRUST_DIR/allowed_signers"
@@ -153,7 +156,7 @@ trust_bootstrap(){
     printf '%s\n' "$pub" > "$tmp/key.pub"
     fingerprint=$(ssh-keygen -lf "$tmp/key.pub" -E sha256 2>/dev/null | awk '{print $2}')
     [ -n "$fingerprint" ] || { rm -rf "$tmp"; return 1; }
-    if [ "$fingerprint" = "$BOOTSTRAP_SIGNER_FINGERPRINT" ]; then
+    if [ "$fingerprint" = "$BOOTSTRAP_SIGNER_FINGERPRINT" ] || [ "$fingerprint" = "$BOOTSTRAP_AUTO_SIGNER_FINGERPRINT" ]; then
       printf 'brain-sync namespaces="git" %s\n' "$pub" >> "$tmp/pinned"
     fi
   done < "$tmp/keys"
