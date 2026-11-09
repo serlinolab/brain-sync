@@ -2,8 +2,11 @@
 # Sign-in mode (MAX-2055): a Mac set up through the app's "Sign in with MediaBuy" reaches GitHub
 # over HTTPS with the app's credential helper; a Mac without the mode keeps its SSH deploy keys.
 
+load 'helpers'
+
 setup() {
   T="$(mktemp -d)"; export HOME="$T/home"; mkdir -p "$HOME"
+  isolate_real_app
   STATE="$T/state"; mkdir -p "$STATE"; export STATE
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   export GIT_CONFIG_NOSYSTEM=1
@@ -51,4 +54,13 @@ load_mode() { bash -c "STATE='$STATE'; source '$REPO_ROOT/lib/auth_mode.sh'; $1"
   echo signin > "$STATE/auth-mode"; echo "$T/nowhere" > "$STATE/credential-helper"
   run load_mode 'echo "${GIT_CONFIG_COUNT:-unset} $GIT_TERMINAL_PROMPT"'
   [ "$output" = "unset 0" ]
+}
+
+@test "a pending clone explains itself in sign-in words in sign-in mode, in key words otherwise" {
+  run bash -c "STATE='$STATE'; source '$REPO_ROOT/lib/complete_setup.sh'; pending_reason"
+  [[ "$output" == *"registered your key"* ]]
+  echo signin > "$STATE/auth-mode"; echo "$APP" > "$STATE/credential-helper"
+  run bash -c "STATE='$STATE'; source '$REPO_ROOT/lib/complete_setup.sh'; pending_reason"
+  [[ "$output" == *"MediaBuy sign-in"* ]]
+  [[ "$output" != *"registered your key"* ]]
 }
