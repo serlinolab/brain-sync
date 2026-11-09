@@ -7,6 +7,8 @@ setup() {
   STATE="$T/state"; mkdir -p "$STATE"; export STATE
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   export GIT_CONFIG_NOSYSTEM=1
+  # The release script runs bats with its own GIT_CONFIG_COUNT (init.defaultBranch): start clean.
+  unset GIT_CONFIG_COUNT; for v in $(compgen -e | grep -E '^GIT_CONFIG_(KEY|VALUE)_[0-9]+$' || true); do unset "$v"; done
   # A person's own helper that must never answer for the Brain.
   git config --global credential.helper '!f(){ echo username=someone-else; echo password=WRONG; }; f'
   # The app's helper: records how it was asked and answers like SerlinoLabBrain --git-credential.
