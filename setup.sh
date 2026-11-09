@@ -83,6 +83,27 @@ elif [ "$(cat "$STATE/person" 2>/dev/null)" != "$PERSON_SLUG" ]; then
   exit 1
 fi
 
+# Sign-in mode (MAX-2055): the Serlino Brain app runs this after "Sign in with MediaBuy", with
+# BRAIN_SIGNIN=1 and BRAIN_CREDENTIAL_HELPER=<the app's executable>. This Mac then gets no SSH
+# deploy keys and no line for Max: git reaches the Brain and team over HTTPS with a token the app
+# gets from MediaBuy for this person's role (lib/auth_mode.sh). Without BRAIN_SIGNIN nothing changes.
+SIGNIN="${BRAIN_SIGNIN:-0}"
+if [ "$SIGNIN" = 1 ]; then
+  helper="${BRAIN_CREDENTIAL_HELPER:-}"
+  case "$helper" in /*) ;; *) echo "Sign-in setup needs BRAIN_CREDENTIAL_HELPER (the app's full path)." >&2; exit 1 ;; esac
+  [ -x "$helper" ] || { echo "Sign-in setup: $helper is not an executable." >&2; exit 1; }
+  if [ -e "$MIRROR_KEY" ] || [ -e "$STATE/team-configured" ]; then
+    # A Mac already set up with deploy keys keeps them: switching it is a separate, deliberate step.
+    echo "This Mac is already set up with its own keys; it keeps them." >&2
+    SIGNIN=0
+  else
+    tmp=$(mktemp "$STATE/.credential-helper.XXXXXX") || exit 1
+    printf '%s\n' "$helper" > "$tmp" && mv -f "$tmp" "$STATE/credential-helper" || exit 1
+    tmp=$(mktemp "$STATE/.auth-mode.XXXXXX") || exit 1
+    printf 'signin\n' > "$tmp" && mv -f "$tmp" "$STATE/auth-mode" || exit 1
+  fi
+fi
+
 # --- signed trust: identical in setup.sh and lib/launcher.sh; never source from a fetched tree.
 # Pin the dedicated release key in BOTH entry points before shipping. No environment override.
 # Bootstrap accepts only ssh-ed25519 keys (including both keys during a rotation bridge).
@@ -288,6 +309,7 @@ cleanup_lock
 trap - EXIT INT TERM
 TEMPLATES="$ENGINE/templates"
 
+if [ "$SIGNIN" != 1 ]; then
 echo "Generating your keys (they never leave this Mac)..."
 derive_public_key() {
   local key="$1" pub="$1.pub" tmp
@@ -327,6 +349,7 @@ append_host() {
 append_host brain-mirror "$MIRROR_KEY" || setup_ok=0
 append_host brain-team "$TEAM_KEY" || setup_ok=0
 chmod 600 "$SSH_CONFIG" || setup_ok=0
+fi   # not in sign-in mode: no keys, no SSH hosts
 
 write_if_absent() {   # $1=dest $2=template basename under templates/ - never overwrites a person's files
   [ -e "$1" ] && return 0
@@ -442,9 +465,13 @@ fi
 if [ "$setup_ok" -eq 1 ]; then
   date -u +%FT%TZ > "$DONE_MARK"
   echo "Setup complete."
+elif [ "$SIGNIN" = 1 ]; then
+  rm -f "$DONE_MARK"
+  echo "Setup could not reach the Brain with your MediaBuy sign-in yet. It finishes by itself on the next sync; if it doesn't, sign in again in the app." >&2
 else
   rm -f "$DONE_MARK"
   echo "Send Max the line starting SERLINO-BRAIN-SETUP. That's all - your folders appear on their own within a few minutes of his approval." >&2
 fi
-echo "SERLINO-BRAIN-SETUP person=$PERSON_SLUG machine=$(hostname -s) mirror_key=$(cat "$MIRROR_KEY.pub" 2>/dev/null || true) team_key=$(cat "$TEAM_KEY.pub" 2>/dev/null || true)"
+[ "$SIGNIN" = 1 ] ||
+  echo "SERLINO-BRAIN-SETUP person=$PERSON_SLUG machine=$(hostname -s) mirror_key=$(cat "$MIRROR_KEY.pub" 2>/dev/null || true) team_key=$(cat "$TEAM_KEY.pub" 2>/dev/null || true)"
 [ "$setup_ok" -eq 1 ]

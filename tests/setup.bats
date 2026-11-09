@@ -21,6 +21,7 @@ setup_setup_test() {
   # MAX-1515 review finding A: setup.sh now sources $ENGINE/lib/common.sh too, to take the
   # same lock a background sync cycle holds around its own complete_setup call.
   cp "$REPO_ROOT/lib/common.sh" "$work/lib/common.sh"
+  cp "$REPO_ROOT/lib/auth_mode.sh" "$work/lib/auth_mode.sh"
   cp "$REPO_ROOT/lib/brain_launcher.sh" "$work/lib/brain_launcher.sh"
   cp -r "$REPO_ROOT/templates/." "$work/templates/"
   setup_test_signing "$work"
@@ -59,6 +60,8 @@ for i in "\${!args[@]}"; do
   case "\${args[\$i]}" in
     git@brain-mirror:serlinolab/Serlinolab-Brain.git) args[\$i]="$repos_dir/mirror.git" ;;
     git@brain-team:serlinolab/brain-team.git) args[\$i]="$repos_dir/team.git" ;;
+    https://github.com/serlinolab/Serlinolab-Brain.git) args[\$i]="$repos_dir/mirror.git" ;;
+    https://github.com/serlinolab/brain-team.git) args[\$i]="$repos_dir/team.git" ;;
   esac
 done
 if [ "\${FAIL_MIRROR:-0}" = 1 ] && [[ " \$* " == *" git@brain-mirror:serlinolab/Serlinolab-Brain.git "* ]]; then exit 1; fi
@@ -71,7 +74,13 @@ if [ "\${FAIL_SPARSE:-0}" = 1 ] && [[ " \$* " == *" sparse-checkout "* ]]; then 
 # (plain text, no backticks - this whole block is INSIDE an unquoted heredoc, where a backtick
 # pair is a command substitution run right now, not a quoting mark - see below)
 if [ "\${FAIL_SPARSE_REAPPLY:-0}" = 1 ] && [[ " \$* " == *" sparse-checkout "* ]] && [[ " \$* " == *" reapply "* ]]; then exit 1; fi
-"\$REAL_GIT" "\${args[@]}" | sed -e "s#$repos_dir/mirror.git#git@brain-mirror:serlinolab/Serlinolab-Brain.git#g" -e "s#$repos_dir/team.git#git@brain-team:serlinolab/brain-team.git#g"
+# A sign-in Mac (its .state/auth-mode says so) stores the HTTPS URLs; the rest the SSH aliases.
+if [ "\$(cat "\$HOME/Serlinolab/.state/auth-mode" 2>/dev/null)" = signin ]; then
+  m=https://github.com/serlinolab/Serlinolab-Brain.git; t=https://github.com/serlinolab/brain-team.git
+else
+  m=git@brain-mirror:serlinolab/Serlinolab-Brain.git; t=git@brain-team:serlinolab/brain-team.git
+fi
+"\$REAL_GIT" "\${args[@]}" | sed -e "s#$repos_dir/mirror.git#\$m#g" -e "s#$repos_dir/team.git#\$t#g"
 exit "\${PIPESTATUS[0]}"
 EOF
   printf '%s\n' '#!/bin/bash' 'exit 0' > "$HOME/bin/launchctl"
@@ -871,4 +880,25 @@ EOF
   [ "$status" -eq 1 ]
   printf '%s' "$output" | grep -q 'Invalid signed key rotation'
   cmp "$state/launcher.sh" "$work/lib/launcher.sh"
+}
+
+@test "sign-in setup makes no keys, no SSH hosts, no line for Max, and clones over HTTPS" {
+  local app="$HOME/app/SerlinoLabBrain"; mkdir -p "$(dirname "$app")"
+  printf '#!/bin/bash\nexit 1\n' > "$app"; chmod +x "$app"
+  BRAIN_SIGNIN=1 BRAIN_CREDENTIAL_HELPER="$app" BRAIN_PERSON=mike run bash "$TEST_SETUP"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *SERLINO-BRAIN-SETUP* ]]
+  [ ! -e "$HOME/.ssh/brain_mirror_ed25519" ] && [ ! -e "$HOME/.ssh/brain_team_ed25519" ]
+  ! grep -q 'brain-mirror\|brain-team' "$HOME/.ssh/config" 2>/dev/null
+  [ "$(cat "$HOME/Serlinolab/.state/auth-mode")" = signin ]
+  [ "$(cat "$HOME/Serlinolab/.state/credential-helper")" = "$app" ]
+  [ "$(git -C "$HOME/Serlinolab/team" remote get-url origin)" = https://github.com/serlinolab/brain-team.git ]
+  [ "$(git -C "$HOME/Serlinolab/Serlinolab_Brain" remote get-url origin)" = https://github.com/serlinolab/Serlinolab-Brain.git ]
+  [ -f "$HOME/Serlinolab/.state/setup-complete" ]
+}
+
+@test "sign-in setup refuses a helper that is not an absolute executable path" {
+  BRAIN_SIGNIN=1 BRAIN_CREDENTIAL_HELPER=SerlinoLabBrain BRAIN_PERSON=mike run bash "$TEST_SETUP"
+  [ "$status" -ne 0 ]
+  [ ! -e "$HOME/Serlinolab/.state/auth-mode" ]
 }

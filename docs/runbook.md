@@ -2,6 +2,18 @@
 
 ## Provisioning a new person or Mac
 
+**With the Serlino Brain app (MAX-2055, the default for new people):** the person opens the app and
+clicks **Sign in with MediaBuy**. The app runs the bundled `setup.sh` with `BRAIN_SIGNIN=1` and
+`BRAIN_CREDENTIAL_HELPER=<the app>`: no SSH keys, no line for Max, no `provision.sh`. The Mac
+records `~/Serlinolab/.state/auth-mode` (`signin`) and reaches the Brain and team over HTTPS; git
+asks the app (`SerlinoLabBrain --git-credential get`) for a one-hour token that MediaBuy issues
+from the person's role: an editor (admin, or a role with **Serlino Brain** that can write) gets
+write access, a reader read access. To give someone access, grant the role in MediaBuy Admin;
+to remove it, take the role away (their token lapses within the hour). Macs set up with deploy
+keys keep them unchanged (`lib/auth_mode.sh` only acts on `auth-mode = signin`).
+
+**With deploy keys (Macs set up before the app's sign-in):**
+
 **Which way to onboard:** use the immutable commit URL and independently published SHA256
 command in [README.md](../README.md). Max supplies both placeholder values after reviewing the
 release. The menu-bar app then arrives through the signed engine update. Existing DMG onboarding
