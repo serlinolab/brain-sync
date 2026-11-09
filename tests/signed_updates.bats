@@ -265,3 +265,37 @@ STUB
   done
   [ ! -e "$HOME/gpg-called" ]
 }
+
+@test "a release signed by the pinned key enrols the auto key; auto-signed releases then run" {
+  printf 'brain-sync namespaces="git" %s\n' "$(awk '{print $1 " " $2}' "$AUTO_SIGNING_KEY.pub")" >> "$BRAIN_SYNC_WORK/config/allowed_signers"
+  git -C "$BRAIN_SYNC_WORK" add -A; git_commit "$BRAIN_SYNC_WORK" enrol-auto
+  git -C "$BRAIN_SYNC_WORK" push -q origin main
+  bash "$TEST_LAUNCHER" --selfcheck-only
+  [ "$(grep -c '^brain-sync ' "$STATE/update-trust/allowed_signers")" -eq 2 ]
+  push_payload
+  git -C "$BRAIN_SYNC_WORK" -c user.signingkey="$AUTO_SIGNING_KEY" -c user.name=test -c user.email=test@example.com commit -qm auto-signed
+  git -C "$BRAIN_SYNC_WORK" push -q origin main
+  run bash "$TEST_LAUNCHER"
+  [ "$status" -eq 0 ]
+  [ -e "$BRAIN_ROOT/untrusted-ran" ]
+  [ "$(git -C "$STATE/engine" rev-parse HEAD)" = "$(git -C "$BRAIN_SYNC_WORK" rev-parse HEAD)" ]
+}
+
+@test "an auto key that was never enrolled cannot sign an update for an installed Mac" {
+  push_payload
+  git -C "$BRAIN_SYNC_WORK" -c user.signingkey="$AUTO_SIGNING_KEY" -c user.name=test -c user.email=test@example.com commit -qm auto-not-enrolled
+  git -C "$BRAIN_SYNC_WORK" push -q origin main
+  assert_rejected
+}
+
+@test "a new Mac bootstraps from a tip the auto pin signed, with both keys listed" {
+  rm -rf "$STATE/update-trust"
+  printf 'brain-sync namespaces="git" %s\n' "$(awk '{print $1 " " $2}' "$AUTO_SIGNING_KEY.pub")" >> "$BRAIN_SYNC_WORK/config/allowed_signers"
+  push_payload
+  git -C "$BRAIN_SYNC_WORK" -c user.signingkey="$AUTO_SIGNING_KEY" -c user.name=test -c user.email=test@example.com commit -qm auto-bridge
+  git -C "$BRAIN_SYNC_WORK" push -q origin main
+  git -C "$STATE/engine" -c user.name=test -c user.email=test@example.com -c commit.gpgsign=false commit --allow-empty -qm unsigned-local
+  bash "$TEST_LAUNCHER"
+  [ -e "$BRAIN_ROOT/untrusted-ran" ]
+  [ "$(grep -c '^brain-sync ' "$STATE/update-trust/allowed_signers")" -eq 2 ]
+}
