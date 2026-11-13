@@ -110,12 +110,13 @@ a protected path: kept in `protected-edits`, with the attention line.
 - its name is `CLAUDE.md`, `CLAUDE.local.md` or `AGENTS.md`, at any depth;
 - any directory component is `.claude` or `.agents` (the `.agents` symlink to `.claude/skills` is protected as a path itself);
 - it is under top-level `method/`;
-- it is one of the ten files the nightly export owns (every page with `managed_by: mediabuy`, the
+- it is one of the eleven files the nightly export owns (every page with `managed_by: mediabuy`, the
   `_DOCUMENTS` list in serlino-mediabuy's `scripts/export_company_brain.py`): `audits/latest-weekly.md`,
   `company/stock-status.md`, `competitors/README.md`, `voice-of-customer/corpus-profile.md`,
   `voice-of-customer/phrase-bank-it.md`, `voice-of-customer/phrase-bank-us.md`,
   `voice-of-customer/support-requests.md`, `company/brand-profile.md`,
-  `methods/serlino-methods.md`, `running-notes/test-results.md`. The last three were missing until
+  `methods/serlino-methods.md`, `running-notes/test-results.md`, `company/voice-pronunciation.md`
+  (the Notion Voice & Pronunciation Library, added 2026-11-13). Three of them were missing until
   2026-10-12, so a team edit to them was sent and then silently overwritten by the next export (the
   workflow exports into a fresh clone, so the exporter's `CONFLICT` check never fires there). When
   the exporter gains or drops a document, change this list and the ruleset with it.
@@ -142,6 +143,7 @@ organisation admins and one integration (id 5001512), always. No branch conditio
 - **Pending (2026-10-12):** add `company/brand-profile.md`, `methods/serlino-methods.md` and
   `running-notes/test-results.md` to the ruleset. The engine already protects them (stricter than
   the ruleset, so harmless meanwhile); until the ruleset has them, only the engine stops a Mac's edit.
+- **Pending (2026-11-13):** add `company/voice-pronunciation.md` to the ruleset, for the same reason.
 - **Earlier still:** classic branch protection on `main` ("push restricted to maxmon64, pull request
   required") was removed on 2026-10-07 when the ruleset went in. Its JSON was never saved, so only
   that one-line description of it survives; do not expect to restore it from a file.
