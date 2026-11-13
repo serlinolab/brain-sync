@@ -15,6 +15,7 @@ BRAIN_PROTECTED_FILES=(
   voice-of-customer/corpus-profile.md voice-of-customer/phrase-bank-it.md
   voice-of-customer/phrase-bank-us.md voice-of-customer/support-requests.md
   company/brand-profile.md methods/serlino-methods.md running-notes/test-results.md
+  company/voice-pronunciation.md
 )
 
 # 0 if the repo-relative path is protected. A path counts if ANY component matches a name or a

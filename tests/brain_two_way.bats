@@ -24,13 +24,13 @@ PROTECTED_PATHS=(AGENTS.md CLAUDE.md a/b/AGENTS.md notes/CLAUDE.local.md .claude
   method/craft/scriptwriting.md audits/latest-weekly.md company/stock-status.md competitors/README.md
   voice-of-customer/corpus-profile.md voice-of-customer/phrase-bank-it.md voice-of-customer/phrase-bank-us.md
   voice-of-customer/support-requests.md company/brand-profile.md methods/serlino-methods.md
-  running-notes/test-results.md)
+  running-notes/test-results.md company/voice-pronunciation.md)
 # MAX-1790: Macs mount case-insensitively, so these load as instructions / hit the same files.
 # GitHub's ruleset folds case too (verified 2026-10-09), so the engine does.
 CASE_VARIANT_PATHS=(claude.md notes/claude.md notes/Agents.md company/agents.md notes/Claude.Local.md
   .CLAUDE/skills/x/SKILL.md x/.Agents/y.md Method/x.md METHOD/README.md Audits/Latest-Weekly.md
   Company/Stock-Status.md Voice-Of-Customer/Phrase-Bank-IT.md Company/Brand-Profile.md
-  Methods/Serlino-Methods.md)
+  Methods/Serlino-Methods.md Company/Voice-Pronunciation.md)
 OPEN_PATHS=(company/brand-rules.md running-notes/max-1790-probe.md docs/method/x.md methods/x.md
   company/CLAUDE.md.bak voice-of-customer/phrase-bank-fr.md)
 
